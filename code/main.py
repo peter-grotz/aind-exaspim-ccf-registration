@@ -198,6 +198,9 @@ def main() -> None:
             "syn_reg_iterations": [400, 200, 40, 0],
         }
     }
+
+    # ants_exaspim = ants.image_read(os.path.abspath("/data/exaspim_template_7subjects_nomask_10um_round6_template_only/fixed_median.nii.gz")) # 10um
+
     data_processes = []
     
     # Create ArgSchemaParser from example_input
