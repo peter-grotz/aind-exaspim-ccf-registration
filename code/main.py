@@ -20,6 +20,7 @@ from numcodecs import blosc
 import glob
 import s3fs
 from urllib.parse import urlparse
+import shutil
 
 from pathlib import Path
 from aind_exaspim_ccf_reg.utils import (
@@ -136,6 +137,8 @@ def main() -> None:
     except FileNotFoundError:
         print(f"Error: {processing_manifest_file} not found.")
         return
+
+    shutil.copy(processing_manifest_file, RESULTS_FOLDER)
 
     print(f"processing_manifest_file: {processing_manifest_file}")
 
