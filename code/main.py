@@ -264,7 +264,7 @@ def main() -> None:
         # load zarr
         #-----------------------------------------------#
         start_date_time = datetime.now()
-        image_path = f"{dataset_path}/{level}"
+        image_path = f"{dataset_path}{level}"
         image = load_zarr(image_path, logger)    
         end_date_time = datetime.now()
         data_processes.append(
@@ -326,14 +326,14 @@ def main() -> None:
     logger.info(f"Finish all steps, execution time: {end_time - start_time} s")
 
 
-    s3_reg_path = get_root_s3_prefix(dataset_path)
-    print(f"Upload reg to {s3_reg_path}")
-    print(f"folder_to_upload: {outprefix_reg}")
+    # s3_reg_path = get_root_s3_prefix(dataset_path)
+    # print(f"Upload reg to {s3_reg_path}")
+    # print(f"folder_to_upload: {outprefix_reg}")
     
-    upload_alignment_data(
-        s3_reg_path,
-        outprefix_reg,
-    )
+    # upload_alignment_data(
+    #     s3_reg_path,
+    #     outprefix_reg,
+    # )
 
 
 
