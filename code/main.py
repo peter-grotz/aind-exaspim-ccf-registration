@@ -138,7 +138,7 @@ def main() -> None:
         print(f"Error: {processing_manifest_file} not found.")
         return
 
-    shutil.copy(processing_manifest_file, RESULTS_FOLDER)
+    shutil.copy(processing_manifest_file, f"{RESULTS_FOLDER}/exaspim_manifest.json")
 
     print(f"processing_manifest_file: {processing_manifest_file}")
 
