@@ -52,7 +52,7 @@ NEW_DATASET_NAME="${DATASET}/ccf_anno_in_sample_space.zarr"
 
 # Input paths
 CCF_ANNOTATION_PATH="../data/allen_mouse_ccf/annotation/ccf_2017/annotation_25.nii.gz"
-CCF_TEMPLATE_PATH="/root/capsule/data/allen_mouse_ccf/average_template/average_template_25.nii.gz"
+CCF_TEMPLATE_PATH="../data/allen_mouse_ccf/average_template/average_template_25.nii.gz"
 EXASPIM_TEMPLATE_PATH="../data/exaSPIM_template_25um/exaspim_template_7sujects_nomask_25um_round6.nii.gz"
 RESAMPLED_IMAGE_PATH="../results/ccf_alignment/registration_metadata/${SUBJECTID}_resampled_zarr_img.nii.gz"
 SAMPLE_IMAGE_PATH="../results/ccf_alignment/registration_metadata/${SUBJECTID}_loaded_zarr_img.nii.gz"
