@@ -4,4 +4,5 @@ set -ex
 # This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
 python -u main.py "$@"
 
-sh run_register_ccf_annotation.sh
+# sh run_register_ccf_annotation.sh
+sh run_register_ccf_annotation_10um.sh

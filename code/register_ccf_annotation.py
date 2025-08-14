@@ -162,7 +162,11 @@ def main():
     exaspim_template = ants.image_read(args.exaspim_template_path)
     resampled_image = ants.image_read(args.resampled_image_path)
     sample_image = ants.image_read(args.sample_image_path)
-    
+
+    exaspim_template.set_spacing(ccf_template.spacing)
+    exaspim_template.set_origin(ccf_template.origin)
+    exaspim_template.set_direction(ccf_template.direction)
+        
     logger.info("Image shapes:")
     logger.info(f"CCF annotation: {ccf_annotation}")
     logger.info(f"CCF template: {ccf_template}")
@@ -246,6 +250,7 @@ def main():
     anno_np = annotation_in_sample.numpy()
     anno_np = adjust_array_reverse(anno_np, inv_swaps, inv_flips)
     annotation_in_sample_reoriented = ants.from_numpy(anno_np.astype(np.uint8))
+    logger.info(f"CCF annotation in the original brain space: {annotation_in_sample_reoriented}")
     ants.image_write(annotation_in_sample_reoriented, f"{args.seg_path}ccf_anno_in_sample_space.nii.gz")
     
     logger.info("Loading original sample data...")
@@ -258,7 +263,9 @@ def main():
         image = np.squeeze(np.squeeze(np.array(image), axis=0), axis=0)
         logger.info(f"Original image shape: {image.shape}")
         logger.info(f"Annotation shape: {annotation_in_sample_reoriented.shape}")
-        ants_image = ants.from_numpy(image.astype(np.uint8))
+        ants_image = ants.from_numpy(image.astype(np.float32))
+        logger.info(f"original brain image: {ants_image}")
+        
         ants.image_write(ants_image, f"{args.seg_path}sample.nii.gz")
 
         if args.show_visualizations:
