@@ -249,7 +249,7 @@ def main():
     # Apply reverse orientation
     anno_np = annotation_in_sample.numpy()
     anno_np = adjust_array_reverse(anno_np, inv_swaps, inv_flips)
-    annotation_in_sample_reoriented = ants.from_numpy(anno_np.astype(np.uint8))
+    annotation_in_sample_reoriented = ants.from_numpy(anno_np.astype(np.float32))
     logger.info(f"CCF annotation in the original brain space: {annotation_in_sample_reoriented}")
     ants.image_write(annotation_in_sample_reoriented, f"{args.seg_path}ccf_anno_in_sample_space.nii.gz")
     
