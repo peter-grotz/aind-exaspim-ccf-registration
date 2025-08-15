@@ -508,9 +508,9 @@ def parse_zarr_metadata(metadata: Dict, multiscale: Optional[str] = None) -> Dic
         axes = multiscales.get("axes")
         datasets = multiscales.get("datasets")
 
-        print(f"\n*multiscales*: {multiscales}")
-        print(f"\n*axes*: {axes}")
-        print(f"\n*datasets*: {datasets}")
+#         print(f"\n*multiscales*: {multiscales}")
+#         print(f"\n*axes*: {axes}")
+#         print(f"\n*datasets*: {datasets}")
         
         dataset_res = None
         for d in datasets:
@@ -518,7 +518,7 @@ def parse_zarr_metadata(metadata: Dict, multiscale: Optional[str] = None) -> Dic
                 dataset_res = d["coordinateTransformations"][0]["scale"]
                 break
                 
-        print(f"*dataset_res*: {dataset_res}")
+        # print(f"*dataset_res*: {dataset_res}")
         for idx in range(len(axes)):
             ax = axes[idx]
             parsed_metadata["axes"][ax["name"]] = {
@@ -527,7 +527,7 @@ def parse_zarr_metadata(metadata: Dict, multiscale: Optional[str] = None) -> Dic
                 "scale": dataset_res[idx],
                 # "scale": dataset_res,
             }
-        print(f"\n*parsed_metadata*: {parsed_metadata}")
+        # print(f"\n*parsed_metadata*: {parsed_metadata}")
 
     return parsed_metadata
 

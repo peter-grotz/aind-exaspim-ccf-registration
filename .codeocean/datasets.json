@@ -34,6 +34,10 @@
 			"mount": "reg_exaspim_template_to_ccf_25um_v1.4"
 		},
 		{
+			"id": "e88f2e9e-54cd-46c4-aad3-70932385db23",
+			"mount": "exaSPIM_782742_ccf_alignment"
+		},
+		{
 			"id": "ee48989d-ae51-4d6b-a520-adaf64831bc1",
 			"mount": "reg_exaspim_template_to_ccf_25um_v1.3"
 		},

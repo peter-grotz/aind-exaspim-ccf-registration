@@ -92,14 +92,30 @@ done
 mkdir -p "$SEG_PATH"
 
 echo "Running CCF annotation registration..."
+# python register_ccf_annotation.py \
+#     --ccf_annotation_path "$CCF_ANNOTATION_PATH" \
+#     --ccf_template_path "$CCF_TEMPLATE_PATH" \
+#     --exaspim_template_path "$EXASPIM_TEMPLATE_PATH" \
+#     --resampled_image_path "$RESAMPLED_IMAGE_PATH" \
+#     --sample_image_path "$SAMPLE_IMAGE_PATH" \
+#     --ccf_to_template_transforms "$CCF_TO_TEMPLATE_TRANSFORM_1" "$CCF_TO_TEMPLATE_TRANSFORM_2" \
+#     --template_to_sample_transforms "$TEMPLATE_TO_SAMPLE_TRANSFORM_1" "$TEMPLATE_TO_SAMPLE_TRANSFORM_2" \
+#     --acquisition_path "$ACQUISITION_PATH" \
+#     --dataset_path "$DATASET_PATH" \
+#     --level "$LEVEL" \
+#     --seg_path "$SEG_PATH" \
+#     --bucket_path "$BUCKET_PATH" \
+#     --new_dataset_name "$NEW_DATASET_NAME" \
+#     --show_visualizations
+
 python register_ccf_annotation.py \
     --ccf_annotation_path "$CCF_ANNOTATION_PATH" \
     --ccf_template_path "$CCF_TEMPLATE_PATH" \
     --exaspim_template_path "$EXASPIM_TEMPLATE_PATH" \
     --resampled_image_path "$RESAMPLED_IMAGE_PATH" \
     --sample_image_path "$SAMPLE_IMAGE_PATH" \
-    --ccf_to_template_transforms "$CCF_TO_TEMPLATE_TRANSFORM_1" "$CCF_TO_TEMPLATE_TRANSFORM_2" \
-    --template_to_sample_transforms "$TEMPLATE_TO_SAMPLE_TRANSFORM_1" "$TEMPLATE_TO_SAMPLE_TRANSFORM_2" \
+    --ccf_to_template_transforms "$CCF_TO_TEMPLATE_TRANSFORM_1" \
+    --template_to_sample_transforms "$TEMPLATE_TO_SAMPLE_TRANSFORM_1" \
     --acquisition_path "$ACQUISITION_PATH" \
     --dataset_path "$DATASET_PATH" \
     --level "$LEVEL" \

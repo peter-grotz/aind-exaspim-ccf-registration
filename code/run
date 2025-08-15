@@ -5,4 +5,4 @@ set -ex
 python -u main.py "$@"
 
 # sh run_register_ccf_annotation.sh
-sh run_register_ccf_annotation_10um.sh
+# sh run_register_ccf_annotation_10um.sh
