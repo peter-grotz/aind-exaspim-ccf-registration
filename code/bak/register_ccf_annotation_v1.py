@@ -211,6 +211,8 @@ class create_precomputed:
 
         return
 
+
+    
 def get_estimated_downsample(
     voxel_resolution: List[float],
     registration_res: Tuple[float] = (16.0, 14.4, 14.4),
@@ -387,113 +389,110 @@ def main():
     # Load images
     logger.info("Loading images...")
 
-    ccf_annotation = ants.image_read(args.ccf_annotation_path)
-    ccf_template = ants.image_read(args.ccf_template_path)
-    exaspim_template = ants.image_read(args.exaspim_template_path)
-    resampled_image = ants.image_read(args.resampled_image_path)
-    sample_image = ants.image_read(args.sample_image_path)
+#     ccf_annotation = ants.image_read(args.ccf_annotation_path)
+#     ccf_template = ants.image_read(args.ccf_template_path)
+#     exaspim_template = ants.image_read(args.exaspim_template_path)
+#     resampled_image = ants.image_read(args.resampled_image_path)
+#     sample_image = ants.image_read(args.sample_image_path)
 
-    exaspim_template.set_spacing(ccf_template.spacing)
-    exaspim_template.set_origin(ccf_template.origin)
-    exaspim_template.set_direction(ccf_template.direction)
+#     exaspim_template.set_spacing(ccf_template.spacing)
+#     exaspim_template.set_origin(ccf_template.origin)
+#     exaspim_template.set_direction(ccf_template.direction)
     
-    logger.info("Image shapes:")
-    logger.info(f"CCF annotation: {ccf_annotation}")
-    logger.info(f"CCF template: {ccf_template}")
-    logger.info(f"exaSPIM template: {exaspim_template}")
-    logger.info(f"Resampled image: {resampled_image}")
-    logger.info(f"Sample image: {sample_image}")
+#     logger.info("Image shapes:")
+#     logger.info(f"CCF annotation: {ccf_annotation}")
+#     logger.info(f"CCF template: {ccf_template}")
+#     logger.info(f"exaSPIM template: {exaspim_template}")
+#     logger.info(f"Resampled image: {resampled_image}")
+#     logger.info(f"Sample image: {sample_image}")
 
-    #---------------------------------------------#
+#     #---------------------------------------------#
             
-    logger.info("Applying transforms...")
-    logger.info(f"Applying ccf_to_template_transforms: {args.ccf_to_template_transforms}")
+#     logger.info("Applying transforms...")
+#     logger.info(f"Applying ccf_to_template_transforms: {args.ccf_to_template_transforms}")
     
-    # Apply transforms: CCF annotation to template space
-    annotation_in_template = ants.apply_transforms(
-        fixed=exaspim_template,
-        moving=ccf_annotation,
-        transformlist=args.ccf_to_template_transforms,
-        interpolator='genericLabel',
-        # whichtoinvert=[True, False]
-        whichtoinvert=[True]
-    )
+#     # Apply transforms: CCF annotation to template space
+#     annotation_in_template = ants.apply_transforms(
+#         fixed=exaspim_template,
+#         moving=ccf_annotation,
+#         transformlist=args.ccf_to_template_transforms,
+#         interpolator='genericLabel',
+#         # whichtoinvert=[True, False]
+#         whichtoinvert=[True]
+#     )
     
-    logger.info(f"Applying template_to_sample_transforms: {args.template_to_sample_transforms}")
-    # Apply transforms: Template to sample space
-    annotation_in_resampled_image = ants.apply_transforms(
-        fixed=resampled_image,
-        moving=annotation_in_template,
-        transformlist=args.template_to_sample_transforms,
-        interpolator='genericLabel',
-        # whichtoinvert=[True, False]
-        whichtoinvert=[True]
-    )
+#     logger.info(f"Applying template_to_sample_transforms: {args.template_to_sample_transforms}")
+#     # Apply transforms: Template to sample space
+#     annotation_in_resampled_image = ants.apply_transforms(
+#         fixed=resampled_image,
+#         moving=annotation_in_template,
+#         transformlist=args.template_to_sample_transforms,
+#         interpolator='genericLabel',
+#         # whichtoinvert=[True, False]
+#         whichtoinvert=[True]
+#     )
     
-    logger.info("Resampling to sample space...")
-    # Resample to sample image space
-    annotation_in_sample = ants.resample_image_to_target(
-        image=annotation_in_resampled_image,
-        target=sample_image,
-        interp_type='genericLabel'
-    )
+#     logger.info("Resampling to sample space...")
+#     # Resample to sample image space
+#     annotation_in_sample = ants.resample_image_to_target(
+#         image=annotation_in_resampled_image,
+#         target=sample_image,
+#         interp_type='genericLabel'
+#     )
     
-    #---------------------------------------------#
-    if args.show_visualizations:
-        logger.info("Saving visualizations...")
-        # Create output directory for figures
-        fig_dir = os.path.join(args.seg_path, "figures")
-        os.makedirs(fig_dir, exist_ok=True)
+#     #---------------------------------------------#
+#     if args.show_visualizations:
+#         logger.info("Saving visualizations...")
+#         # Create output directory for figures
+#         fig_dir = os.path.join(args.seg_path, "figures")
+#         os.makedirs(fig_dir, exist_ok=True)
         
-        show_overlay(ccf_template, ccf_annotation, "CCF Annotation on CCF", 
-                    save_path=os.path.join(fig_dir, "ccf_annotation_on_ccf.png"))
-        show_overlay(exaspim_template, annotation_in_template, "CCF Annotation on exaSPIM Template", 
-                    save_path=os.path.join(fig_dir, "ccf_annotation_on_exaspim_template.png"))
-        show_overlay(resampled_image, annotation_in_resampled_image, "CCF Annotation on resampled image", 
-                    save_path=os.path.join(fig_dir, "ccf_annotation_on_resampled_image.png"))
-        show_overlay(sample_image, annotation_in_sample, "CCF Annotation on sample image", 
-                    save_path=os.path.join(fig_dir, "ccf_annotation_on_sample_image.png"))
+#         show_overlay(ccf_template, ccf_annotation, "CCF Annotation on CCF", 
+#                     save_path=os.path.join(fig_dir, "ccf_annotation_on_ccf.png"))
+#         show_overlay(exaspim_template, annotation_in_template, "CCF Annotation on exaSPIM Template", 
+#                     save_path=os.path.join(fig_dir, "ccf_annotation_on_exaspim_template.png"))
+#         show_overlay(resampled_image, annotation_in_resampled_image, "CCF Annotation on resampled image", 
+#                     save_path=os.path.join(fig_dir, "ccf_annotation_on_resampled_image.png"))
+#         show_overlay(sample_image, annotation_in_sample, "CCF Annotation on sample image", 
+#                     save_path=os.path.join(fig_dir, "ccf_annotation_on_sample_image.png"))
     
-    #--------------------------------------
-    # REORIENT to the original image direction
-    #---------------------------------------
-    logger.info("Applying reverse orientation...")
-    # Load metadata and get swaps/flips
-    with open(args.acquisition_path, "r") as f:
-        metadata = json.load(f)
-        if "tile_000000_ch_" in metadata["tiles"][0]["file_name"]:
-            ccf_directions = {
-                0: "Anterior_to_posterior",
-                1: "Superior_to_inferior",
-                2: "Left_to_right",
-            }
-        else:
-            ccf_directions = {
-                0: "Posterior_to_anterior",
-                1: "Inferior_to_superior",
-                2: "Left_to_right",
-            }
+#     #--------------------------------------
+#     # REORIENT to the original image direction
+#     #---------------------------------------
+#     logger.info("Applying reverse orientation...")
+#     # Load metadata and get swaps/flips
+#     with open(args.acquisition_path, "r") as f:
+#         metadata = json.load(f)
+#         if "tile_000000_ch_" in metadata["tiles"][0]["file_name"]:
+#             ccf_directions = {
+#                 0: "Anterior_to_posterior",
+#                 1: "Superior_to_inferior",
+#                 2: "Left_to_right",
+#             }
+#         else:
+#             ccf_directions = {
+#                 0: "Posterior_to_anterior",
+#                 1: "Inferior_to_superior",
+#                 2: "Left_to_right",
+#             }
     
-    swaps, flips = get_adjustments(metadata['axes'], ccf_directions)
-    logger.info(f"Original swaps: {swaps}, flips: {flips}")
+#     swaps, flips = get_adjustments(metadata['axes'], ccf_directions)
+#     logger.info(f"Original swaps: {swaps}, flips: {flips}")
     
-    # Invert swaps and flips
-    inv_swaps = [(b, a) for (a, b) in reversed(swaps)]
-    inv_flips = flips
-    logger.info(f"Inverse swaps: {inv_swaps}, flips: {inv_flips}")
+#     # Invert swaps and flips
+#     inv_swaps = [(b, a) for (a, b) in reversed(swaps)]
+#     inv_flips = flips
+#     logger.info(f"Inverse swaps: {inv_swaps}, flips: {inv_flips}")
     
-    # Apply reverse orientation
-    anno_np = annotation_in_sample.numpy()
-    anno_np = adjust_array_reverse(anno_np, inv_swaps, inv_flips)
-    annotation_in_sample_reoriented = ants.from_numpy(anno_np.astype(np.float32))
-    logger.info(f"CCF annotation in the original brain space: {annotation_in_sample_reoriented}")
-    ants.image_write(annotation_in_sample_reoriented, f"{args.seg_path}ccf_anno_in_sample_space.nii.gz")
+#     # Apply reverse orientation
+#     anno_np = annotation_in_sample.numpy()
+#     anno_np = adjust_array_reverse(anno_np, inv_swaps, inv_flips)
+#     annotation_in_sample_reoriented = ants.from_numpy(anno_np.astype(np.float32))
+#     logger.info(f"CCF annotation in the original brain space: {annotation_in_sample_reoriented}")
+#     ants.image_write(annotation_in_sample_reoriented, f"{args.seg_path}ccf_anno_in_sample_space.nii.gz")
     
-    # annotation_in_sample_reoriented = ants.image_read(f"{args.seg_path}ccf_anno_in_sample_space.nii.gz")
-    # print(f"annotation_in_sample_reoriented: {annotation_in_sample_reoriented}")
+    annotation_in_sample_reoriented = ants.image_read(f"{args.seg_path}ccf_anno_in_sample_space.nii.gz")
 
-    aligned_image = annotation_in_sample_reoriented.numpy()
-    
     #--------------------------------------
     # load original zarr image
     #--------------------------------------
@@ -520,10 +519,12 @@ def main():
     except Exception as e:
         logger.info(f"Warning: Could not load original sample data: {e}")
 
-    # ---------------------------------------------#
-    ccf_annotation = ants.image_read(args.ccf_annotation_path)
+    #---------------------------------------------#
+    # ccf_annotation = ants.image_read(args.ccf_annotation_path)
     
+    print(f"annotation_in_sample_reoriented: {annotation_in_sample_reoriented}")
 
+    aligned_image = annotation_in_sample_reoriented.numpy()
     aligned_image_dask = da.from_array(aligned_image)
 
     logger.info(f"Before changing orientation: {aligned_image_dask.shape}, DR: {aligned_image.min()}, {aligned_image.max()}")
@@ -559,129 +560,150 @@ def main():
         opts=opts,
         params=params
     )
-    #-------------------------------------#
    
-    regions = read_json_as_dict(
-        "./aind_exaspim_ccf_reg/ccf_files/annotation_map.json"
-    )
-    precompute_path = os.path.join(args.seg_path, "ccf_annotation_precomputed")
-    create_folder(precompute_path)
-    create_folder(f"{precompute_path}/segment_properties")
+#     regions = read_json_as_dict(
+#         "./aind_exaspim_ccf_reg/ccf_files/annotation_map.json"
+#     )
+#     precompute_path = os.path.join(args.seg_path, "ccf_annotation_precomputed")
+#     create_folder(precompute_path)
+#     create_folder(f"{precompute_path}/segment_properties")
    
-    # ---------------------------
+#     # ---------------------------
+
     
-    acquisition_res = image_metadata["multiscales"][0]["datasets"][0][
-        "coordinateTransformations"
-    ][0]["scale"][2:]
-    logger.info(f"Image was acquired at resolution (um): {acquisition_res}")
-    reg_scale = get_estimated_downsample(acquisition_res)
-    logger.info(f"Image is being downsampled by a factor: {reg_scale}")
-    reg_res = [(float(res) * 2**reg_scale) / 1000 for res in acquisition_res]
-    logger.info(f"Registration resolution (mm): {reg_res}")
-    spacing = tuple(reg_res)
+#     # ---------------------------
+#     acquisition_res = image_metadata["multiscales"][0]["datasets"][0][
+#         "coordinateTransformations"
+#     ][0]["scale"][2:]
+#     logger.info(f"Image was acquired at resolution (um): {acquisition_res}")
+#     reg_scale = get_estimated_downsample(acquisition_res)
+#     logger.info(f"Image is being downsampled by a factor: {reg_scale}")
+#     reg_res = [(float(res) * 2**reg_scale) / 1000 for res in acquisition_res]
+#     logger.info(f"Registration resolution (mm): {reg_res}")
+#     spacing = tuple(reg_res)
     
     
     # -----------------------------
-    ng_params = {
-            "save_path": precompute_path,
-            "regions": regions,
-            "scale_params": {
-                "encoding": "compresso",
-                "compressed_block": [16, 16, 16],
-                "chunk_size": [32, 32, 32],
-                "factors": [2, 2, 2],
-                "num_scales": 3,
-            }
-        }
+#     ng_params = {
+#             "save_path": precompute_path,
+#             "regions": regions,
+#             "scale_params": {
+#                 "encoding": "compresso",
+#                 "compressed_block": [16, 16, 16],
+#                 "chunk_size": [32, 32, 32],
+#                 "factors": [2, 2, 2],
+#                 "num_scales": 3,
+#             }
+#         }
     
-     # because precomputed builds xyz nor zyx
-    aligned_image_out = np.swapaxes(aligned_image, 0, 2)
+#      # because precomputed builds xyz nor zyx
+#     aligned_image_out = np.swapaxes(aligned_image, 0, 2)
 
-    visual_spacing = tuple(
-        [s * 10**6 for s in spacing[::-1]]
-    )
-    ng_params["scale_params"]["res"] = visual_spacing
-    ng_params["scale_params"]["dims"] = [
-        dim for dim in aligned_image.shape
-    ]
-    logger.info("-----"*10)
-    logger.info(f"ng_params: {ng_params}")
-    logger.info("-----"*10)
+#     visual_spacing = tuple(
+#         [s * 10**6 for s in spacing[::-1]]
+#     )
 
-    seg = create_precomputed(ng_params)
-    seg.create_segmentation_info()
-    seg.build_precomputed_info()
-    seg.create_segment_precomputed(aligned_image)
+#     ng_params["scale_params"]["res"] = visual_spacing
+#     ng_params["scale_params"]["dims"] = [
+#         dim for dim in aligned_image_out.shape
+#     ]
 
-    # ----------------------------------------
-    # old does not work for annoation upsampling
-    #----------------------------------------
+#     seg = create_precomputed(ng_params)
+#     seg.create_segmentation_info()
+#     seg.build_precomputed_info()
+#     seg.create_segment_precomputed(aligned_image_out)
 
-    logger.info("Creating segmentation mask...")
-    # Import upscale_mask modules (assuming they exist)
-    try:
         
-        # Get image metadata
-        image_metadata = utils.load_json(data_path=dataset_path, keyname=".zattrs")
-        scale = str(args.level)
-        image_metadata = utils.parse_zarr_metadata(metadata=image_metadata, multiscale=scale)
         
-        # Calculate resolution
-        current_res = (
-            image_metadata["axes"]["z"]["scale"],
-            image_metadata["axes"]["y"]["scale"],
-            image_metadata["axes"]["x"]["scale"],
-        )
-        logger.info(f"Current resolution: {current_res}")
-        
-        target_res = (
-            np.array(current_res) / ( 2 ** ( int(scale) + 1) )
-        ).tolist()
-        target_res = tuple(target_res)
-        logger.info(f"Target resolution: {target_res}")
-        
-        upscale_factors_zyx = (
-            (current_res[0] / target_res[0]) / 2,
-            (current_res[1] / target_res[1]) / 2,
-            (current_res[2] / target_res[2]) / 2,
-        )
-        
-        # Create segmentation mask
-        voxel_size, n_lvls = upscale_mask.upscale_mask(
-            dataset_path=dataset_path,
-            mask_data=aligned_image,
-            upscale_factors_zyx=upscale_factors_zyx,
-            output_folder=args.seg_path,
-            filename="ccf_anno_in_sample_space.zarr",
-            dest_multiscale="0",
-        )
-        
-        logger.info(f"Creating {n_lvls} levels in the pyramid.")
-        
-        # Write multiscales
-        cluster = LocalCluster()
-        client = Client(cluster)
-        
-        upscale_mask.write_multiscales(
-            path_to_data=f"{args.seg_path}/ccf_anno_in_sample_space.zarr",
-            chunk_size=[128, 128, 128],
-            scale_factor=[2, 2, 2],
-            target_size_mb=1024,
-            n_lvls=n_lvls - 1,
-            root_group=None,
-            voxel_size=voxel_size,
-        )
-        
-        client.close()
-        cluster.close()
+    # -----------------------------
 
-    except ImportError as e:
-        logger.info(f"Warning: Could not import upscale_mask modules: {e}")
-        logger.info("Skipping segmentation mask creation and S3 upload.")
-    except Exception as e:
-        logger.info(f"Error during segmentation mask creation: {e}")
-        sys.exit(1)
+#     visual_spacing = tuple(
+#         [s * 10**6 for s in spacing[::-1]]
+#     )
+#     ng_params["scale_params"]["res"] = visual_spacing
+#     ng_params["scale_params"]["dims"] = [
+#         dim for dim in aligned_image.shape
+#     ]
+#     logger.info("-----"*10)
+#     logger.info(f"ng_params: {ng_params}")
+#     logger.info("-----"*10)
 
+#     seg = create_precomputed(ng_params)
+#     seg.create_segmentation_info()
+#     seg.build_precomputed_info()
+#     seg.create_segment_precomputed(aligned_image)
+
+# ----------------------------------------
+# old does not work for annoation upsampling
+#     #----------------------------
     
+#     logger.info("Creating segmentation mask...")
+#     # Import upscale_mask modules (assuming they exist)
+#     try:
+        
+#         # Get image metadata
+#         image_metadata = utils.load_json(data_path=dataset_path, keyname=".zattrs")
+#         scale = str(args.level)
+#         image_metadata = utils.parse_zarr_metadata(metadata=image_metadata, multiscale=scale)
+        
+#         # Calculate resolution
+#         current_res = (
+#             image_metadata["axes"]["z"]["scale"],
+#             image_metadata["axes"]["y"]["scale"],
+#             image_metadata["axes"]["x"]["scale"],
+#         )
+#         logger.info(f"Current resolution: {current_res}")
+        
+#         target_res = (
+#             np.array(current_res) / ( 2 ** ( int(scale) + 1) )
+#         ).tolist()
+#         target_res = tuple(target_res)
+#         logger.info(f"Target resolution: {target_res}")
+        
+#         upscale_factors_zyx = (
+#             (current_res[0] / target_res[0]) / 2,
+#             (current_res[1] / target_res[1]) / 2,
+#             (current_res[2] / target_res[2]) / 2,
+#         )
+        
+#         # Create segmentation mask
+#         voxel_size, n_lvls = upscale_mask.upscale_mask(
+#             dataset_path=dataset_path,
+#             mask_data=annotation_in_sample_reoriented,
+#             upscale_factors_zyx=upscale_factors_zyx,
+#             output_folder=args.seg_path,
+#             filename="ccf_anno_in_sample_space.zarr",
+#             dest_multiscale="0",
+#         )
+        
+#         logger.info(f"Creating {n_lvls} levels in the pyramid.")
+        
+#         # Write multiscales
+#         cluster = LocalCluster()
+#         client = Client(cluster)
+        
+#         upscale_mask.write_multiscales(
+#             path_to_data=f"{args.seg_path}/ccf_anno_in_sample_space.zarr",
+#             chunk_size=[128, 128, 128],
+#             scale_factor=[2, 2, 2],
+#             target_size_mb=1024,
+#             n_lvls=n_lvls - 1,
+#             root_group=None,
+#             voxel_size=voxel_size,
+#         )
+        
+#         client.close()
+#         cluster.close()
+
+    # except ImportError as e:
+    #     logger.info(f"Warning: Could not import upscale_mask modules: {e}")
+    #     logger.info("Skipping segmentation mask creation and S3 upload.")
+    # except Exception as e:
+    #     logger.info(f"Error during segmentation mask creation: {e}")
+    #     sys.exit(1)
+
+        
+
+
 if __name__ == "__main__":
     main() 

@@ -23,15 +23,10 @@ from urllib.parse import urlparse
 # Import local modules
 from aind_exaspim_ccf_reg.preprocess import get_adjustments, adjust_array
 from aind_exaspim_ccf_reg.utils import create_logger, create_folder, read_json_as_dict
-from aind_exaspim_ccf_reg.register import ZarrWriter
-
 from upscale_mask import utils, upscale_mask
 
 from cloudvolume import CloudVolume
 import scipy.ndimage as ndi
-import dask.array as da
-from numcodecs import blosc
-blosc.use_threads = False
 
 class create_precomputed:
     def __init__(self, ng_params):
@@ -211,6 +206,8 @@ class create_precomputed:
 
         return
 
+
+    
 def get_estimated_downsample(
     voxel_resolution: List[float],
     registration_res: Tuple[float] = (16.0, 14.4, 14.4),
@@ -375,12 +372,25 @@ def main():
     args = parser.parse_args()
     logger = create_logger(output_log_path=args.seg_path)
     
+    
+    # -----------------------------
     if "/" == args.dataset_path[-1]:
         dataset_path = args.dataset_path[:-1]
     logger.info(f"dataset_path: {dataset_path}")
     
     image_metadata = utils.load_json(data_path=dataset_path, keyname=".zattrs")
     print(f"image_metadata: {image_metadata}")
+    
+    # -----------------
+    acquisition_res = image_metadata["multiscales"][0]["datasets"][0][
+        "coordinateTransformations"
+    ][0]["scale"][2:]
+    logger.info(f"Image was acquired at resolution (um): {acquisition_res}")
+    reg_scale = get_estimated_downsample(acquisition_res)
+    logger.info(f"Image is being downsampled by a factor: {reg_scale}")
+    reg_res = [(float(res) * 2**reg_scale) / 1000 for res in acquisition_res]
+    logger.info(f"Registration resolution (mm): {reg_res}")
+    spacing = tuple(reg_res)
     
     #---------------------------------------------#
 
@@ -397,6 +407,7 @@ def main():
     exaspim_template.set_origin(ccf_template.origin)
     exaspim_template.set_direction(ccf_template.direction)
     
+    
     logger.info("Image shapes:")
     logger.info(f"CCF annotation: {ccf_annotation}")
     logger.info(f"CCF template: {ccf_template}")
@@ -405,7 +416,9 @@ def main():
     logger.info(f"Sample image: {sample_image}")
 
     #---------------------------------------------#
-            
+                
+        
+
     logger.info("Applying transforms...")
     logger.info(f"Applying ccf_to_template_transforms: {args.ccf_to_template_transforms}")
     
@@ -439,6 +452,8 @@ def main():
     )
     
     #---------------------------------------------#
+    
+
     if args.show_visualizations:
         logger.info("Saving visualizations...")
         # Create output directory for figures
@@ -489,19 +504,15 @@ def main():
     logger.info(f"CCF annotation in the original brain space: {annotation_in_sample_reoriented}")
     ants.image_write(annotation_in_sample_reoriented, f"{args.seg_path}ccf_anno_in_sample_space.nii.gz")
     
-    # annotation_in_sample_reoriented = ants.image_read(f"{args.seg_path}ccf_anno_in_sample_space.nii.gz")
-    # print(f"annotation_in_sample_reoriented: {annotation_in_sample_reoriented}")
-
-    aligned_image = annotation_in_sample_reoriented.numpy()
-    
-    #--------------------------------------
-    # load original zarr image
-    #--------------------------------------
     logger.info("Loading original sample data...")
     # Load original sample data
     image_path = f"{dataset_path}/{args.level}"
     logger.info(f"Loading from: {image_path}")
     
+    #--------------------------------------
+    # load original zarr image
+    #--------------------------------------
+
     try:
         image = zarr.open(image_path, mode="r")
         image = np.squeeze(np.squeeze(np.array(image), axis=0), axis=0)
@@ -520,68 +531,19 @@ def main():
     except Exception as e:
         logger.info(f"Warning: Could not load original sample data: {e}")
 
-    # ---------------------------------------------#
-    ccf_annotation = ants.image_read(args.ccf_annotation_path)
+    #---------------------------------------------#
+    # ccf_annotation = ants.image_read(args.ccf_annotation_path)
+    # annotation_in_sample_reoriented = ants.image_read(f"{args.seg_path}ccf_anno_in_sample_space.nii.gz")
+    print(f"annotation_in_sample_reoriented: {annotation_in_sample_reoriented}")
     
-
-    aligned_image_dask = da.from_array(aligned_image)
-
-    logger.info(f"Before changing orientation: {aligned_image_dask.shape}, DR: {aligned_image.min()}, {aligned_image.max()}")
-
-    aligned_image_dask = da.moveaxis(aligned_image_dask, [0, 1, 2], [2, 1, 0])
-    logger.info(f"After changing orientation: {aligned_image_dask.shape}, DR: {aligned_image.min()}, {aligned_image.max()}, {aligned_image_dask.dtype}, {aligned_image.dtype}")
-
-    params = {
-        "OMEZarr_params": {
-            "clevel": 1,
-            "compressor": "zstd",
-            "chunks": (64, 64, 64),
-        },
-        "metadata_folder": args.seg_path
-    }
-
-    opts = {
-        "compressor": blosc.Blosc(
-            cname=params["OMEZarr_params"]["compressor"],
-            clevel=params["OMEZarr_params"]["clevel"],
-            shuffle=blosc.SHUFFLE,
-        )
-    }
-    image_name = "ccf_anno_in_sample_space.zarr"
-
-    zarr_writer = ZarrWriter(logger)
-    
-    zarr_writer.write_zarr(
-        img_array=aligned_image_dask,
-        physical_pixel_sizes=(10, 10, 10),
-        output_path=args.seg_path,
-        image_name=image_name,
-        opts=opts,
-        params=params
-    )
-    #-------------------------------------#
-   
     regions = read_json_as_dict(
         "./aind_exaspim_ccf_reg/ccf_files/annotation_map.json"
     )
     precompute_path = os.path.join(args.seg_path, "ccf_annotation_precomputed")
     create_folder(precompute_path)
     create_folder(f"{precompute_path}/segment_properties")
-   
-    # ---------------------------
     
-    acquisition_res = image_metadata["multiscales"][0]["datasets"][0][
-        "coordinateTransformations"
-    ][0]["scale"][2:]
-    logger.info(f"Image was acquired at resolution (um): {acquisition_res}")
-    reg_scale = get_estimated_downsample(acquisition_res)
-    logger.info(f"Image is being downsampled by a factor: {reg_scale}")
-    reg_res = [(float(res) * 2**reg_scale) / 1000 for res in acquisition_res]
-    logger.info(f"Registration resolution (mm): {reg_res}")
-    spacing = tuple(reg_res)
-    
-    
-    # -----------------------------
+
     ng_params = {
             "save_path": precompute_path,
             "regions": regions,
@@ -594,15 +556,13 @@ def main():
             }
         }
     
-     # because precomputed builds xyz nor zyx
-    aligned_image_out = np.swapaxes(aligned_image, 0, 2)
-
+    aligned_image_array = annotation_in_sample_reoriented.numpy()
     visual_spacing = tuple(
         [s * 10**6 for s in spacing[::-1]]
     )
     ng_params["scale_params"]["res"] = visual_spacing
     ng_params["scale_params"]["dims"] = [
-        dim for dim in aligned_image.shape
+        dim for dim in aligned_image_array.shape
     ]
     logger.info("-----"*10)
     logger.info(f"ng_params: {ng_params}")
@@ -611,12 +571,10 @@ def main():
     seg = create_precomputed(ng_params)
     seg.create_segmentation_info()
     seg.build_precomputed_info()
-    seg.create_segment_precomputed(aligned_image)
+    seg.create_segment_precomputed(aligned_image_array)
 
-    # ----------------------------------------
-    # old does not work for annoation upsampling
-    #----------------------------------------
-
+    #----------------------------
+    
     logger.info("Creating segmentation mask...")
     # Import upscale_mask modules (assuming they exist)
     try:
@@ -649,7 +607,7 @@ def main():
         # Create segmentation mask
         voxel_size, n_lvls = upscale_mask.upscale_mask(
             dataset_path=dataset_path,
-            mask_data=aligned_image,
+            mask_data=aligned_image_array,
             upscale_factors_zyx=upscale_factors_zyx,
             output_folder=args.seg_path,
             filename="ccf_anno_in_sample_space.zarr",
@@ -675,6 +633,29 @@ def main():
         client.close()
         cluster.close()
 
+        # logger.info("Uploading to S3...")
+        # # Upload to S3
+        # s3_path = f"s3://{args.bucket_path}/{args.new_dataset_name}"
+        # logger.info(f"Uploading to: {s3_path}")
+
+        # fs = s3fs.S3FileSystem()
+        # url = urlparse(s3_path)
+        
+        # if url.scheme != "s3":
+        #     raise NotImplementedError(f"Only s3 output_uri is supported, not {url.scheme}")
+        
+        # file_to_be_upload = f"{args.seg_path}/ccf_anno_in_sample_space.zarr"
+        # logger.info(f"Uploading: {file_to_be_upload}")
+        
+        # fs.put(
+        #     file_to_be_upload, 
+        #     url.netloc + url.path.rstrip("/") + "/", 
+        #     recursive=True, 
+        #     maxdepth=10
+        # )
+        
+        # logger.info("Upload complete!")
+        
     except ImportError as e:
         logger.info(f"Warning: Could not import upscale_mask modules: {e}")
         logger.info("Skipping segmentation mask creation and S3 upload.")
@@ -682,6 +663,6 @@ def main():
         logger.info(f"Error during segmentation mask creation: {e}")
         sys.exit(1)
 
-    
+
 if __name__ == "__main__":
     main() 

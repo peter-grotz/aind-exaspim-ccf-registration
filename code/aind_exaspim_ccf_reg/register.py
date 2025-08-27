@@ -103,7 +103,22 @@ class TemplateLoader:
                       f"{outprefix}/exaspim_template",
                       title="exaspim_template", 
                       vmin=0, vmax=1.5)
-        
+
+        # #------------------------
+        # if round(ccf.spacing[0], 3) == 0.025:
+        #     # TODO, create a mask for exaspim_template
+        #     mask_path = "/data/exaSPIM_template_mask_25um_otsu.nii.gz"
+        #     self.logger.info(f"Load exaSPIM template mask from {mask_path}")
+        #     mask_25um = ants.image_read(mask_path)
+        #     ants_exaspim = mask_25um * ants_exaspim
+            
+        #     plot_antsimgs(ants_exaspim, 
+        #               f"{outprefix}/exaspim_template_masked",
+        #               title="exaspim_template_masked", 
+        #               vmin=0, vmax=1.5)
+
+        # #------------------------
+ 
         return ccf, ants_exaspim
 
 
@@ -170,7 +185,14 @@ class ImagePreprocessor:
         self.logger.info(
             f"Intensity normalization completed, execution time: {end_time - start_time} s -- image {ants_img}"
         )
-
+        # #------------------------
+        # # TODO, hardcode for 721332
+        # mask_path = "/data/721332_whole_brain_mask_25um.nii.gz"
+        # self.logger.info(f"Load brain mask from {mask_path}")
+        # mask_25um = ants.image_read(mask_path)
+        # ants_img = mask_25um * ants_img
+        # #------------------------
+        
         figpath = f"{outprefix}{dataset_id}_loaded_zarr_img"
         plot_antsimgs(ants_img, figpath, title=f"{dataset_id}_loaded_zarr_img", vmin=0, vmax=1.5)
         ants.image_write(ants_img, f"{outprefix}{dataset_id}_loaded_zarr_img.nii.gz")

@@ -362,8 +362,6 @@ if __name__ == "__main__":
 
     # main(dataset_path, level, resolution)
 
-
-
     # dataset_path = str(dataset_config["pipeline_processing"]["registration"]["alignment_channel_path"])
     # level = int(str(dataset_config["pipeline_processing"]["registration"]["level"]))
     # resolution = int(str(dataset_config["pipeline_processing"]["registration"]["resolution"]))

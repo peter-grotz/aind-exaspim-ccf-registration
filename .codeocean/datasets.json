@@ -2,6 +2,10 @@
 	"version": 1,
 	"attached_datasets": [
 		{
+			"id": "26b6c381-1a63-460b-bf46-304ca2b6e62f",
+			"mount": "reg_721332_to_ccf_25um_v1.3"
+		},
+		{
 			"id": "30dd60f8-d85d-46e6-8a6d-3af4b7577f04",
 			"mount": "reg_exaspim_template_to_ccf_withGradMap_10um_v1.0"
 		},
@@ -12,6 +16,10 @@
 		{
 			"id": "3e2619dd-7035-4ab5-af68-1b75054b16d5",
 			"mount": "reg_exaspim_template_to_ccf_withGradMap_25um_v1.0"
+		},
+		{
+			"id": "53218fbf-2651-4a1a-896e-95361b99a3f5",
+			"mount": "782742_reverse_ccf_anno_zarr"
 		},
 		{
 			"id": "725d783a-a2df-4c64-a5d8-cdc0f35afd3a",
@@ -30,8 +38,16 @@
 			"mount": "reg_exaspim_template_to_ccf_withGradMap_25um_v2"
 		},
 		{
+			"id": "9e979e11-c4f8-4b97-85b7-8a3203749c91",
+			"mount": "721332_whole_brain_mask"
+		},
+		{
 			"id": "a07157ab-990e-45d8-8e4c-53ebef2b74df",
 			"mount": "reg_exaspim_template_to_ccf_25um_v1.4"
+		},
+		{
+			"id": "e796518c-2e91-4d25-8960-a03a3198fc98",
+			"mount": "root_annotation"
 		},
 		{
 			"id": "e88f2e9e-54cd-46c4-aad3-70932385db23",

@@ -458,10 +458,13 @@ def upscale_zarr_with_padding_chunked(
         output_dtype = np.uint16
     else:
         output_dtype = np.uint32
+        
 
     if 'dtype' in output_params:
         output_dtype = np.dtype(output_params['dtype'])
 
+    output_dtype = np.uint32
+        
     print(f"Target shape: {target_shape_3d}")
     print(f"Output dtype: {output_dtype}")
     print(f"Processing in chunks of {chunk_size_z} Z slices")
@@ -638,7 +641,8 @@ def upscale_mask(
     output_params = {
         "chunksize": [1, 1, 128, 128, 128],
         "resolution_zyx": resolution_zyx,
-        "dtype": np.uint8,
+        # "dtype": np.uint8,
+        "dtype": np.uint32,
         "path": output_filepath,
         "compressor": image_compressor,
         "dimension_separator": "/",
