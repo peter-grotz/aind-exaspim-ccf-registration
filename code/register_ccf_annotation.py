@@ -415,8 +415,7 @@ def main():
         moving=ccf_annotation,
         transformlist=args.ccf_to_template_transforms,
         interpolator='genericLabel',
-        # whichtoinvert=[True, False]
-        whichtoinvert=[True]
+        whichtoinvert=[True, False]
     )
     
     logger.info(f"Applying template_to_sample_transforms: {args.template_to_sample_transforms}")
@@ -426,8 +425,7 @@ def main():
         moving=annotation_in_template,
         transformlist=args.template_to_sample_transforms,
         interpolator='genericLabel',
-        # whichtoinvert=[True, False]
-        whichtoinvert=[True]
+        whichtoinvert=[True, False]
     )
     
     logger.info("Resampling to sample space...")
