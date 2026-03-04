@@ -387,7 +387,7 @@ def main():
     # Load images
     logger.info("Loading images...")
 
-    ccf_annotation = ants.image_read(args.ccf_annotation_path)
+    ccf_annotation = ants.image_read(args.ccf_annotation_path, pixeltype='unsigned int')
     ccf_template = ants.image_read(args.ccf_template_path)
     exaspim_template = ants.image_read(args.exaspim_template_path)
     resampled_image = ants.image_read(args.resampled_image_path)
