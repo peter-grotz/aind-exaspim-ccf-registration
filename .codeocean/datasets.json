@@ -18,10 +18,6 @@
 			"mount": "reg_exaspim_template_to_ccf_withGradMap_25um_v1.0"
 		},
 		{
-			"id": "53218fbf-2651-4a1a-896e-95361b99a3f5",
-			"mount": "782742_reverse_ccf_anno_zarr"
-		},
-		{
 			"id": "725d783a-a2df-4c64-a5d8-cdc0f35afd3a",
 			"mount": "exaspim_template_7subjects_nomask_10um_round6_template_only"
 		},
@@ -48,10 +44,6 @@
 		{
 			"id": "e796518c-2e91-4d25-8960-a03a3198fc98",
 			"mount": "root_annotation"
-		},
-		{
-			"id": "e88f2e9e-54cd-46c4-aad3-70932385db23",
-			"mount": "exaSPIM_782742_ccf_alignment"
 		},
 		{
 			"id": "ee48989d-ae51-4d6b-a520-adaf64831bc1",

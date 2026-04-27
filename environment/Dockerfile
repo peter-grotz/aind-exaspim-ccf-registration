@@ -7,23 +7,22 @@ ARG AWS_ACCESS_KEY_ID
 ARG AWS_DEFAULT_REGION
 ARG AWS_SECRET_ACCESS_KEY
 
-ARG GIT_ASKPASS
-ARG GIT_ACCESS_TOKEN
-COPY git-askpass /
-
 RUN conda install -y --channel=conda-forge \
+        ants==2.6.5 \
         s3fs==2023.9.2 \
-    && conda clean -ya
+        pyopenssl>=23 \
+    && conda clean -ya \
+    && which antsApplyTransforms
+
 
 RUN pip install -U --no-cache-dir \
-    antspyx==0.4.2 \
+    antspyx==0.5.4 \
     ome-zarr==0.8.2 \
     simpleitk==2.3.0 \
     zarr==2.16.1 \
     argschema==3.0.4 \
     openpyxl==3.1.5 \
     aind-data-schema==1.3.0 \
-    s3fs==2022.11.0 \
     scikit-image==0.19.3 \
     tifffile==2022.10.10 \
     bokeh==2.4.2 \
@@ -34,5 +33,4 @@ RUN pip install -U --no-cache-dir \
     natsort==8.4.0 \
     crackle-codec==0.26.0 \
     aicsimageio@git+https://github.com/camilolaiton/aicsimageio.git@feature/zarrwriter-multiscales-daskjobs \
-    awscli 
     
