@@ -9,7 +9,11 @@ applies reverse orientation, and creates a multiscale segmentation mask.
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
+from glob import glob
 from typing import List, Tuple
 
 import ants
@@ -32,6 +36,7 @@ import scipy.ndimage as ndi
 import dask.array as da
 from numcodecs import blosc
 blosc.use_threads = False
+
 
 class create_precomputed:
     def __init__(self, ng_params):
@@ -210,6 +215,76 @@ class create_precomputed:
             os.rename(file, new_file)
 
         return
+
+def create_uint32_reference_image(reference_image: ants.ANTsImage) -> ants.ANTsImage:
+    """
+    Create an empty uint32 image that matches the reference image geometry.
+    """
+    label_reference = ants.from_numpy(
+        np.zeros(reference_image.shape, dtype=np.uint32)
+    )
+    label_reference.set_spacing(reference_image.spacing)
+    label_reference.set_origin(reference_image.origin)
+    label_reference.set_direction(reference_image.direction)
+    return label_reference
+
+
+def apply_label_transforms(
+    fixed_reference: ants.ANTsImage,
+    moving_labels: ants.ANTsImage,
+    transformlist: List[str],
+    whichtoinvert: List[bool],
+) -> ants.ANTsImage:
+    """
+    Apply ANTs transforms for labels while avoiding single precision.
+    """
+    return ants.apply_transforms(
+        fixed=fixed_reference,
+        moving=moving_labels,
+        transformlist=transformlist,
+        interpolator="genericLabel",
+        whichtoinvert=whichtoinvert,
+        singleprecision=False,
+    )
+
+
+def resample_label_image_to_target_with_ants(
+    moving_labels: ants.ANTsImage,
+    target_reference: ants.ANTsImage,
+    work_dir: str,
+) -> ants.ANTsImage:
+    """
+    Resample a label image onto a target grid using ANTs CLI.
+    """
+    ants_apply_transforms = shutil.which("antsApplyTransforms")
+    if ants_apply_transforms is None:
+        raise RuntimeError(
+            "antsApplyTransforms was not found on PATH. "
+            "Install the ANTs CLI package in the Docker image."
+        )
+
+    with tempfile.TemporaryDirectory(dir=work_dir) as tmpdir:
+        moving_path = os.path.join(tmpdir, "moving_labels.nii.gz")
+        reference_path = os.path.join(tmpdir, "target_reference.nii.gz")
+        output_path = os.path.join(tmpdir, "resampled_labels.nii.gz")
+
+        ants.image_write(moving_labels, moving_path)
+        ants.image_write(target_reference, reference_path)
+
+        cmd = [
+            ants_apply_transforms,
+            "-d", str(moving_labels.dimension),
+            "-i", moving_path,
+            "-r", reference_path,
+            "-o", output_path,
+            "-n", "GenericLabel",
+            "-t", "identity",
+            "--float", "0",
+        ]
+        subprocess.run(cmd, check=True)
+
+        return ants.image_read(output_path, pixeltype="unsigned int")
+
 
 def get_estimated_downsample(
     voxel_resolution: List[float],
@@ -404,36 +479,37 @@ def main():
     logger.info(f"Resampled image: {resampled_image}")
     logger.info(f"Sample image: {sample_image}")
 
+    exaspim_label_reference = create_uint32_reference_image(exaspim_template)
+    resampled_label_reference = create_uint32_reference_image(resampled_image)
+    sample_label_reference = create_uint32_reference_image(sample_image)
+
     #---------------------------------------------#
             
     logger.info("Applying transforms...")
     logger.info(f"Applying ccf_to_template_transforms: {args.ccf_to_template_transforms}")
     
     # Apply transforms: CCF annotation to template space
-    annotation_in_template = ants.apply_transforms(
-        fixed=exaspim_template,
-        moving=ccf_annotation,
+    annotation_in_template = apply_label_transforms(
+        fixed_reference=exaspim_label_reference,
+        moving_labels=ccf_annotation,
         transformlist=args.ccf_to_template_transforms,
-        interpolator='genericLabel',
-        whichtoinvert=[True, False]
-    )
+        whichtoinvert=[True, False],
+    )        
     
     logger.info(f"Applying template_to_sample_transforms: {args.template_to_sample_transforms}")
-    # Apply transforms: Template to sample space
-    annotation_in_resampled_image = ants.apply_transforms(
-        fixed=resampled_image,
-        moving=annotation_in_template,
+    annotation_in_resampled_image = apply_label_transforms(
+        fixed_reference=resampled_label_reference,
+        moving_labels=annotation_in_template,
         transformlist=args.template_to_sample_transforms,
-        interpolator='genericLabel',
-        whichtoinvert=[True, False]
-    )
+        whichtoinvert=[True, False],
+    )    
     
     logger.info("Resampling to sample space...")
     # Resample to sample image space
-    annotation_in_sample = ants.resample_image_to_target(
-        image=annotation_in_resampled_image,
-        target=sample_image,
-        interp_type='genericLabel'
+    annotation_in_sample = resample_label_image_to_target_with_ants(
+        moving_labels=annotation_in_resampled_image,
+        target_reference=sample_label_reference,
+        work_dir=args.seg_path,
     )
     
     #---------------------------------------------#
@@ -483,7 +559,7 @@ def main():
     # Apply reverse orientation
     anno_np = annotation_in_sample.numpy()
     anno_np = adjust_array_reverse(anno_np, inv_swaps, inv_flips)
-    annotation_in_sample_reoriented = ants.from_numpy(anno_np.astype(np.float32))
+    annotation_in_sample_reoriented = ants.from_numpy(anno_np.astype(np.uint32))
     logger.info(f"CCF annotation in the original brain space: {annotation_in_sample_reoriented}")
     ants.image_write(annotation_in_sample_reoriented, f"{args.seg_path}ccf_anno_in_sample_space.nii.gz")
     
@@ -518,9 +594,6 @@ def main():
     except Exception as e:
         logger.info(f"Warning: Could not load original sample data: {e}")
 
-    # ---------------------------------------------#
-    ccf_annotation = ants.image_read(args.ccf_annotation_path)
-    
 
     aligned_image_dask = da.from_array(aligned_image)
 
