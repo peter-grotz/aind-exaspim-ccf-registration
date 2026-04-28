@@ -8,6 +8,7 @@ ARG AWS_DEFAULT_REGION
 ARG AWS_SECRET_ACCESS_KEY
 
 RUN conda install -y --channel=conda-forge \
+        python=3.9.*=*cpython* \
         ants==2.6.5 \
         s3fs==2023.9.2 \
         pyopenssl>=23 \
@@ -31,5 +32,10 @@ RUN pip install -U --no-cache-dir \
     matplotlib==3.7.3 \
     natsort==8.4.0 \
     crackle-codec==0.26.0 \
+    boto3==1.28.17 \
+    botocore==1.31.17 \
+    s3transfer==0.6.2 \
+    s3fs==2023.9.2 \
+    aiobotocore==2.5.4 \
     aicsimageio@git+https://github.com/camilolaiton/aicsimageio.git@feature/zarrwriter-multiscales-daskjobs
     
