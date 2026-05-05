@@ -20,8 +20,14 @@ import s3fs
 import psutil
 import pydantic
 from aind_exaspim_ccf_reg.configs import PathLike
-from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
-                                              Processing)
+from aind_data_schema.core.processing import DataProcess
+
+
+PROCESSING_DESCRIBED_BY = "https://raw.githubusercontent.com/AllenNeuralDynamics/aind-data-schema/main/src/aind_data_schema/core/processing.py"
+PROCESSING_SCHEMA_VERSION = "2.2.5"
+PIPELINE_NAME = "aind-exaspim-ccf-registration"
+PIPELINE_URL = "https://codeocean.allenneuraldynamics.org/capsule/1087961/tree"
+
 
 def extract_dataset_id(s3_path: str) -> Optional[str]:
     """
@@ -221,33 +227,164 @@ def generate_processing(
 ) -> None:
     """
     Generate processing metadata and save to file.
-
-    Parameters
-    ----------
-    data_processes : List[DataProcess]
-        List of data processing steps
-    dest_processing : PathLike
-        Destination path for processing metadata
-    processor_full_name : str
-        Full name of the processor
-    pipeline_version : str
-        Version of the pipeline
     """
-    processing_pipeline = PipelineProcess(
-        data_processes=data_processes,
-        processor_full_name=processor_full_name,
-        pipeline_version=pipeline_version,
-        pipeline_url="https://codeocean.allenneuraldynamics.org/capsule/1087961/tree",
-        note="Metadata for the CCF Atlas Registration step",
-    )
+    processing = {
+        "object_type": "Processing",
+        "describedBy": PROCESSING_DESCRIBED_BY,
+        "schema_version": PROCESSING_SCHEMA_VERSION,
+        "data_processes": [
+            _serialize_data_process(
+                data_process=data_process,
+                index=index,
+                processor_full_name=processor_full_name,
+                pipeline_version=pipeline_version,
+            )
+            for index, data_process in enumerate(data_processes)
+        ],
+        "pipelines": [
+            {
+                "object_type": "Code",
+                "url": PIPELINE_URL,
+                "name": PIPELINE_NAME,
+                "version": pipeline_version,
+                "container": None,
+                "run_script": "code/run",
+                "language": "Python",
+                "language_version": None,
+                "input_data": None,
+                "parameters": {},
+                "core_dependency": None,
+            }
+        ],
+        "notes": (
+            "Metadata for the CCF Atlas Registration step. This stage-local "
+            "processing.json should be appended to the derived asset's "
+            "top-level processing.json."
+        ),
+        "dependency_graph": _build_sequential_dependency_graph(data_processes),
+    }
 
-    processing = Processing(
-        processing_pipeline=processing_pipeline,
-        notes="This processing only contains metadata of ccf registration \
-            and needs to be compiled with other steps at the end",
-    )
+    output_path = Path(dest_processing).joinpath("processing.json")
+    output_path.write_text(json.dumps(processing, indent=3, default=_json_default) + "\n")
 
-    processing.write_standard_file(output_directory=dest_processing)
+
+def _serialize_data_process(
+    data_process: DataProcess,
+    index: int,
+    processor_full_name: str,
+    pipeline_version: str,
+) -> dict:
+    process = _model_to_dict(data_process)
+    process_type = _enum_or_value(process.get("name"))
+    input_location = process.get("input_location")
+    output_location = process.get("output_location")
+    parameters = process.get("parameters") or {}
+
+    output_parameters = {
+        "input_location": _asset_relative_path(input_location),
+        "output_location": _asset_relative_path(output_location),
+        "outputs": process.get("outputs") or {},
+        "software_version": process.get("software_version"),
+        "code_ocean_capsule_id": os.environ.get("CO_CAPSULE_ID"),
+    }
+    output_parameters = {
+        key: value for key, value in output_parameters.items()
+        if value is not None
+    }
+
+    return {
+        "object_type": "Data process",
+        "process_type": process_type,
+        "name": _process_name(process_type, index, parameters),
+        "stage": "Processing",
+        "code": {
+            "object_type": "Code",
+            "url": process.get("code_url"),
+            "name": PIPELINE_NAME,
+            "version": process.get("code_version") or pipeline_version,
+            "container": None,
+            "run_script": "code/run",
+            "language": "Python",
+            "language_version": platform.python_version(),
+            "input_data": None,
+            "parameters": parameters,
+            "core_dependency": None,
+        },
+        "experimenters": [processor_full_name] if processor_full_name else [],
+        "pipeline_name": PIPELINE_NAME,
+        "start_date_time": process.get("start_date_time"),
+        "end_date_time": process.get("end_date_time"),
+        "output_path": _stored_output_path(output_location),
+        "output_parameters": output_parameters,
+        "notes": process.get("notes"),
+        "resources": process.get("resources"),
+    }
+
+
+def _model_to_dict(model) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    if hasattr(model, "dict"):
+        return model.dict()
+    return dict(model)
+
+
+def _enum_or_value(value):
+    if hasattr(value, "value"):
+        return value.value
+    return value
+
+
+def _asset_relative_path(path):
+    if not isinstance(path, str):
+        return path
+    for marker in ("/capsule/results/", "/results/"):
+        if marker in path:
+            return path.split(marker, 1)[1]
+    return path
+
+
+def _stored_output_path(output_location):
+    output_location = _asset_relative_path(output_location)
+    if not isinstance(output_location, str):
+        return output_location
+    if output_location.startswith("s3://"):
+        return None
+    return output_location
+
+
+def _process_name(process_type, index, parameters):
+    resolution = parameters.get("resolution_um")
+    if resolution is not None:
+        return f"{process_type} - {resolution} um"
+    return f"{process_type} - step {index + 1}"
+
+
+def _build_sequential_dependency_graph(data_processes: List[DataProcess]) -> dict:
+    names = []
+    for index, data_process in enumerate(data_processes):
+        process = _model_to_dict(data_process)
+        names.append(
+            _process_name(
+                process_type=_enum_or_value(process.get("name")),
+                index=index,
+                parameters=process.get("parameters") or {},
+            )
+        )
+    return {
+        name: [] if index == 0 else [names[index - 1]]
+        for index, name in enumerate(names)
+    }
+
+
+def _json_default(value):
+    if isinstance(value, datetime):
+        return value.isoformat().replace("+00:00", "Z")
+    if hasattr(value, "value"):
+        return value.value
+    if isinstance(value, Path):
+        return str(value)
+    return str(value)
 
 
 def get_size(bytes, suffix: str = "B") -> str:
@@ -416,3 +553,6 @@ def save_string_to_txt(txt: str, filepath: str, mode="w") -> None:
 
     with open(filepath, mode) as file:
         file.write(txt + "\n")
+
+
+

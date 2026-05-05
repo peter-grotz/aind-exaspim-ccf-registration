@@ -8,7 +8,7 @@ registration of exaSPIM data to the Allen Mouse Brain Atlas.
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 import argparse
 
@@ -128,7 +128,7 @@ def main() -> None:
     DATA_FOLDER = os.path.abspath("../data")
     RESULTS_FOLDER = os.path.abspath("../results")
     CCF_FOLDER = os.path.abspath(f"{DATA_FOLDER}/allen_mouse_ccf")
-    start_time = datetime.now()
+    start_time = datetime.now(timezone.utc)
 
     processing_manifest_file = os.path.abspath(glob.glob(f"{DATA_FOLDER}/*.json")[0])
     try:
@@ -214,10 +214,10 @@ def main() -> None:
     # Load OMEZarr image 
     #-----------------------------------------------#
 
-    start_date_time = datetime.now()
+    start_date_time = datetime.now(timezone.utc)
     image_path = f"{dataset_path}{level}"
     image = load_zarr(image_path, logger)
-    end_date_time = datetime.now()
+    end_date_time = datetime.now(timezone.utc)
 
     data_processes.append(
         DataProcess(
@@ -230,7 +230,13 @@ def main() -> None:
             outputs={},
             code_url=code_url,
             code_version=__version__,
-            parameters={},
+            parameters={
+                parameters={
+                "input_uri": dataset_path,
+                "level": level,
+                "resolution_um": resolution,
+            },
+            },
             notes="Importing fused data for alignment",
         )
     )
@@ -238,13 +244,13 @@ def main() -> None:
     #-----------------------------------------------#
     # registration
     #-----------------------------------------------#
-    start_date_time = datetime.now()
+    start_date_time = datetime.now(timezone.utc)
 
     brain_to_exaspim_transform_path = pipeline.register(
         parser=parser,
         zarr_image=image,
     )
-    end_date_time = datetime.now()
+    end_date_time = datetime.now(timezone.utc)
 
     data_processes.append(
         DataProcess(
@@ -257,6 +263,13 @@ def main() -> None:
             outputs={},
             code_url=code_url,
             code_version=__version__,
+            parameters={
+                "level": level,
+                "resolution_um": resolution,
+                "dataset_id": dataset_id,
+                "sample_to_template_registration": example_input["reg_param_25um"],
+                "template_to_ccf_transforms": exaspim_to_ccf_transform_path,
+            },
             parameters={},
             notes="Template based registration: sample -> template -> CCF",
         )
@@ -269,10 +282,10 @@ def main() -> None:
         #-----------------------------------------------#
         # load zarr
         #-----------------------------------------------#
-        start_date_time = datetime.now()
+        start_date_time = datetime.now(timezone.utc)
         image_path = f"{dataset_path}{level}"
         image = load_zarr(image_path, logger)    
-        end_date_time = datetime.now()
+        end_date_time = datetime.now(timezone.utc)
         data_processes.append(
             DataProcess(
                 name=ProcessName.IMAGE_IMPORTING,
@@ -284,7 +297,11 @@ def main() -> None:
                 outputs={},
                 code_url=code_url,
                 code_version=__version__,
-                parameters={},
+                parameters={
+                    "input_uri": dataset_path,
+                    "level": level,
+                    "resolution_um": resolution,
+                },
                 notes="Importing fused data for alignment",
             )
         )
@@ -292,7 +309,7 @@ def main() -> None:
         #-----------------------------------------------#
         # apply transforms to 10um
         #-----------------------------------------------#    
-        start_date_time = datetime.now()
+        start_date_time = datetime.now(timezone.utc)
         output_path = pipeline.apply_transforms_to_10um(
             parser=parser,
             zarr_image=image,
@@ -300,7 +317,7 @@ def main() -> None:
             dataset_id=f"{dataset_id}_10um",
         )
 
-        end_date_time = datetime.now()
+        end_date_time = datetime.now(timezone.utc)
         data_processes.append(
             DataProcess(
                 name=ProcessName.IMAGE_ATLAS_ALIGNMENT,
@@ -312,7 +329,14 @@ def main() -> None:
                 outputs={},
                 code_url=code_url,
                 code_version=__version__,
-                parameters={},
+                parameters={
+                    "level": level,
+                    "resolution_um": resolution,
+                    "dataset_id": f"{dataset_id}_10um",
+                    "sample_to_template_registration": example_input["reg_param_10um"],
+                    "sample_to_template_transforms": brain_to_exaspim_transform_path,
+                    "template_to_ccf_transforms": exaspim_to_ccf_transform_path,
+                },
                 notes=f"Registering 10um sample to CCF using transforms: {brain_to_exaspim_transform_path} and {exaspim_to_ccf_transform_path}",
             )
         )  
@@ -324,11 +348,11 @@ def main() -> None:
     generate_processing(
         data_processes=data_processes,
         dest_processing=outprefix_reg,
-        processor_full_name="Di Wang",
+        processor_full_name="Peter Grotz",
         pipeline_version="0.0.1",
     )
 
-    end_time = datetime.now()    
+    end_time = datetime.now(timezone.utc))    
     logger.info(f"Finish all steps, execution time: {end_time - start_time} s")
 
 
