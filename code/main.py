@@ -350,7 +350,7 @@ def main() -> None:
         pipeline_version="0.0.1",
     )
 
-    end_time = datetime.now(timezone.utc))    
+    end_time = datetime.now(timezone.utc)    
     logger.info(f"Finish all steps, execution time: {end_time - start_time} s")
 
 
