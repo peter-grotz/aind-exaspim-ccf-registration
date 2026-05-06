@@ -268,7 +268,6 @@ def main() -> None:
                 "sample_to_template_registration": example_input["reg_param_25um"],
                 "template_to_ccf_transforms": exaspim_to_ccf_transform_path,
             },
-            parameters={},
             notes="Template based registration: sample -> template -> CCF",
         )
     )
