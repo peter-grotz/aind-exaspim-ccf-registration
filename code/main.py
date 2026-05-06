@@ -231,11 +231,9 @@ def main() -> None:
             code_url=code_url,
             code_version=__version__,
             parameters={
-                parameters={
                 "input_uri": dataset_path,
                 "level": level,
                 "resolution_um": resolution,
-            },
             },
             notes="Importing fused data for alignment",
         )
