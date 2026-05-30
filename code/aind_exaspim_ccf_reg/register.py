@@ -26,7 +26,6 @@ import xarray_multiscale
 import zarr
 from aicsimageio.types import PhysicalPixelSizes
 from aicsimageio.writers import OmeZarrWriter
-from aind_data_schema.core.processing import DataProcess, ProcessName
 from argschema import ArgSchemaParser
 from dask.distributed import Client, LocalCluster, performance_report
 from distributed import wait
