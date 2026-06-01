@@ -2,6 +2,11 @@
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/jupyterlab:3.6.1-miniconda4.12.0-python3.9-ubuntu20.04
 
+# === TEMPORARY (TEST) — REMOVE BEFORE PRODUCTION ===
+# Read fused image + mask from the scratch test dir (where fusion wrote them);
+# acquisition still reads aind-open-data. Delete this line to restore production.
+ENV OUTPUT_PREFIX=s3://aind-scratch-data/exaspim_processing_test
+
 ARG DEBIAN_FRONTEND=noninteractive
 ARG AWS_ACCESS_KEY_ID
 ARG AWS_DEFAULT_REGION
