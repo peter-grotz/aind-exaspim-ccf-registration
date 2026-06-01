@@ -1,39 +1,36 @@
 #!/usr/bin/env python3
-"""
-Lightweight, dependency-free "process record" emitter for PRODUCER capsules.
+"""Emit v2 DataProcess JSON files ("*_data_process.json") for PRODUCER capsules.
 
-Centralized-metadata architecture (PLAN.md §10.8 / §13.3): producer capsules do
-NOT build aind-data-schema objects. They drop a small `process_record.json` into
-their results subfolder; the UPLOAD capsule (the only one with the v2 stack)
-converts records -> validated v2 Processing.
+Architecture: producer capsules drop one `*_data_process.json` per processing
+step (a valid aind-data-schema v2 DataProcess document). The UPLOAD capsule runs
+`aind-metadata-manager`, which collects every `*_data_process.json`, validates
+each as a DataProcess, merges them with upstream `processing.json` files, and
+writes the aggregated top-level `processing.json`.
 
 This module is STDLIB-ONLY on purpose, so it runs unchanged in every producer
-env — incl. the registration capsule's Python 3.9 (no aind-data-schema, no
-Python bump, no registration-repro risk).
+env (incl. Python 3.9). It hand-builds the DataProcess dict — the upload
+capsule's aind-data-schema validates it centrally.
 
-Vendoring: copy this file into each producer capsule's `code/`. Keep one
-canonical copy here (`_capsules/_shared/`) as the source of truth.
+Vendoring: copy this file into each producer capsule's `code/`; keep the
+canonical copy in `_capsules/_shared/`.
 
-Usage (in a producer's run / main):
-    from aind_process_record import make_record, write_records
-    rec = make_record(
+Usage (in a producer):
+    from aind_process_record import make_data_process, write_data_process
+    dp = make_data_process(
         process_type="Image atlas alignment",
         name="Image atlas alignment - 25 um",
-        start=start_dt, end=end_dt,            # datetimes or ISO strings
+        start=start_dt, end=end_dt,
         code_url="https://github.com/AllenNeuralDynamics/aind-exaspim-ccf-registration.git",
-        code_name="aind-exaspim-ccf-registration",
-        code_version=os.environ.get("CODE_VERSION", "0.0.0"),
-        parameters={"resolution_um": 25, "moving_mask": "registration_metadata/..._mask_25um.nii.gz"},
-        experimenters=["Di Wang"],
-        output_path="ccf_alignment/",          # asset-root-relative
-        notes="sample -> template -> CCF",
+        code_name="aind-exaspim-ccf-registration", code_version="0.0.1",
+        parameters={"resolution_um": 25},
+        experimenters=["Di Wang"], output_path="ccf_alignment/",
     )
-    write_records([rec], "/results/ccf_alignment")
+    write_data_process(dp, "/results/ccf_alignment")
 """
 from __future__ import annotations
 
 import json
-import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -48,11 +45,13 @@ def _iso(dt) -> str | None:
         return dt
     if isinstance(dt, datetime):
         s = dt.isoformat()
-        return s.replace("+00:00", "Z") if s.endswith("+00:00") else (s + "Z" if "+" not in s and "Z" not in s else s)
+        if s.endswith("+00:00"):
+            return s.replace("+00:00", "Z")
+        return s if ("+" in s or s.endswith("Z")) else s + "Z"
     return str(dt)
 
 
-def make_record(
+def make_data_process(
     *,
     process_type: str,
     name: str,
@@ -71,36 +70,45 @@ def make_record(
     notes: str | None = None,
     pipeline_name: str | None = PIPELINE_NAME,
 ) -> dict:
-    """Build one schema-agnostic process record (plain dict). No validation here;
-    the upload capsule validates when it constructs the v2 DataProcess."""
+    """Build one v2 DataProcess document (plain dict). Validated centrally by
+    aind-metadata-manager in the upload capsule."""
     return {
+        "object_type": "Data process",
         "process_type": process_type,
         "name": name,
         "stage": stage,
-        "start_date_time": _iso(start),
-        "end_date_time": _iso(end),
-        "experimenters": experimenters or [],
-        "pipeline_name": pipeline_name,
         "code": {
+            "object_type": "Code",
             "url": code_url,
             "name": code_name,
             "version": code_version,
             "run_script": run_script,
             "language": language,
+            "parameters": parameters or {},
         },
-        "parameters": parameters or {},
+        "experimenters": experimenters or [],
+        "pipeline_name": pipeline_name,
+        "start_date_time": _iso(start),
+        "end_date_time": _iso(end),
         "output_path": output_path,
         "output_parameters": output_parameters,
         "notes": notes,
     }
 
 
-def write_records(records, dest_dir, filename: str = "process_record.json") -> str:
-    """Write a list of records (or a single record) to <dest_dir>/<filename>."""
-    if isinstance(records, dict):
-        records = [records]
+def _slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_") or "process"
+
+
+def write_data_process(data_process: dict, dest_dir, filename: str | None = None) -> str:
+    """Write one DataProcess to <dest_dir>/<name>_data_process.json."""
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
-    out = dest / filename
-    out.write_text(json.dumps(records, indent=3) + "\n")
+    out = dest / (filename or f"{_slug(data_process.get('name'))}_data_process.json")
+    out.write_text(json.dumps(data_process, indent=3) + "\n")
     return str(out)
+
+
+def write_data_processes(data_processes, dest_dir) -> list[str]:
+    """Write a list of DataProcess docs, one *_data_process.json file each."""
+    return [write_data_process(dp, dest_dir) for dp in data_processes]

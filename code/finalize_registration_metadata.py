@@ -1,71 +1,42 @@
 #!/usr/bin/env python3
-"""Append the CCF-annotation process record after the annotation step runs.
+"""Emit the CCF-annotation step as a *_data_process.json after it runs.
 
-Centralized-metadata architecture: main.py writes ccf_alignment/process_record.json
-(a list of lightweight process records). The annotation step
-(run_register_ccf_annotation_10um.sh) runs AFTER main.py, so this script appends
-the annotation record and enriches the 25um alignment record's outputs once the
-files exist. The upload capsule converts records -> validated v2 processing.json.
+main.py writes one *_data_process.json per registration step. The annotation
+step (run_register_ccf_annotation_10um.sh) runs AFTER main.py, so this script
+emits its DataProcess once its outputs exist. The upload capsule's
+aind-metadata-manager collects every *_data_process.json and aggregates them
+into the validated top-level processing.json.
 """
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from aind_process_record import make_record
+from aind_process_record import make_data_process, write_data_process
 
 RESULTS_DIR = Path("../results")
 CCF_ALIGNMENT_DIR = RESULTS_DIR / "ccf_alignment"
-RECORD_PATH = CCF_ALIGNMENT_DIR / "process_record.json"
 CODE_URL = "https://github.com/AllenNeuralDynamics/aind-exaspim-ccf-registration.git"
 CODE_NAME = "aind-exaspim-ccf-registration"
 VERSION = "0.0.1"
-ANNOTATION_NAME = "CCF annotation to sample space"
 
 
 def main() -> None:
-    records = json.loads(RECORD_PATH.read_text()) if RECORD_PATH.exists() else []
     subject_id = _find_subject_id()
-
-    _enrich_alignment_outputs(records, subject_id)
-    records = [r for r in records if r.get("name") != ANNOTATION_NAME]
-    records.append(_annotation_record(subject_id))
-
-    RECORD_PATH.write_text(json.dumps(records, indent=3) + "\n")
-    print(f"Appended annotation record to: {RECORD_PATH}")
-
-
-def _enrich_alignment_outputs(records: list, subject_id: str) -> None:
-    outputs = {
-        "transforms": _existing_paths(
-            [
-                CCF_ALIGNMENT_DIR / f"{subject_id}_to_exaSPIM_SyN_0GenericAffine.mat",
-                CCF_ALIGNMENT_DIR / f"{subject_id}_to_exaSPIM_SyN_1Warp.nii.gz",
-                CCF_ALIGNMENT_DIR / f"{subject_id}_to_exaSPIM_SyN_1InverseWarp.nii.gz",
-            ]
-        ),
-        "aligned_image": _existing_path(CCF_ALIGNMENT_DIR / "ccf_aligned.zarr"),
-    }
-    outputs = {k: v for k, v in outputs.items() if v}
-    for r in records:
-        if r.get("process_type") == "Image atlas alignment" and str(r.get("name", "")).endswith("25 um"):
-            op = r.get("output_parameters") or {}
-            op["standard_outputs"] = outputs
-            r["output_parameters"] = op
-
-
-def _annotation_record(subject_id: str) -> dict:
     annotation_dir = CCF_ALIGNMENT_DIR / "ccf_anno_to_sample"
     start_date_time, end_date_time = _output_time_bounds(annotation_dir)
+
     standard_outputs = {
         "annotation_image": _existing_path(annotation_dir / "ccf_anno_in_sample_space.nii.gz"),
         "annotation_zarr": _existing_path(annotation_dir / "ccf_anno_in_sample_space.zarr"),
     }
     standard_outputs = {k: v for k, v in standard_outputs.items() if v}
-    return make_record(
+
+    dp = make_data_process(
         process_type="Image atlas alignment",
-        name=ANNOTATION_NAME,
+        name="CCF annotation to sample space",
         start=start_date_time,
         end=end_date_time,
         code_url=CODE_URL,
@@ -84,6 +55,8 @@ def _annotation_record(subject_id: str) -> dict:
         output_parameters={"standard_outputs": standard_outputs} if standard_outputs else None,
         notes="Transforms CCF annotation into sample space and writes zarr/precomputed label volumes.",
     )
+    out = write_data_process(dp, str(CCF_ALIGNMENT_DIR))
+    print(f"Wrote annotation data_process.json: {out}")
 
 
 def _find_subject_id() -> str:
@@ -98,7 +71,6 @@ def _find_subject_id() -> str:
             value = payload.get(key)
             if not value:
                 continue
-            import re
             match = re.search(r"(\d{6})", str(value))
             if match:
                 return match.group(1)
@@ -121,10 +93,6 @@ def _output_time_bounds(path: Path) -> Tuple[str, str]:
         datetime.fromtimestamp(min(timestamps), timezone.utc).isoformat().replace("+00:00", "Z"),
         datetime.fromtimestamp(max(timestamps), timezone.utc).isoformat().replace("+00:00", "Z"),
     )
-
-
-def _existing_paths(paths: List[Path]) -> List[str]:
-    return [_asset_path(p) for p in paths if p.exists()]
 
 
 def _existing_path(path: Path) -> Optional[str]:

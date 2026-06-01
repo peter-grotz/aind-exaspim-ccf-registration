@@ -33,7 +33,7 @@ from aind_exaspim_ccf_reg.utils import (
 from aind_exaspim_ccf_reg.configs import PathLike, RegSchema
 from aind_exaspim_ccf_reg.preprocess import perc_normalization, check_orientation
 from aind_exaspim_ccf_reg.plots import plot_reg, plot_antsimgs
-from aind_process_record import make_record, write_records
+from aind_process_record import make_data_process, write_data_processes
 from aind_exaspim_ccf_reg.register import RegistrationPipeline
 from argschema import ArgSchemaParser
 
@@ -219,7 +219,7 @@ def main() -> None:
     end_date_time = datetime.now(timezone.utc)
 
     records.append(
-        make_record(
+        make_data_process(
             process_type="Image importing",
             name="Image importing - 25 um",
             start=start_date_time,
@@ -249,7 +249,7 @@ def main() -> None:
     end_date_time = datetime.now(timezone.utc)
 
     records.append(
-        make_record(
+        make_data_process(
             process_type="Image atlas alignment",
             name="Image atlas alignment - 25 um",
             start=start_date_time,
@@ -282,7 +282,7 @@ def main() -> None:
         image = load_zarr(image_path, logger)    
         end_date_time = datetime.now(timezone.utc)
         records.append(
-            make_record(
+            make_data_process(
                 process_type="Image importing",
                 name="Image importing - 10 um",
                 start=start_date_time,
@@ -313,7 +313,7 @@ def main() -> None:
 
         end_date_time = datetime.now(timezone.utc)
         records.append(
-            make_record(
+            make_data_process(
                 process_type="Image atlas alignment",
                 name="Image atlas alignment - 10 um",
                 start=start_date_time,
@@ -335,8 +335,8 @@ def main() -> None:
             )
         )
 
-    record_path = write_records(records, outprefix_reg)
-    logger.info(f"Wrote process records (upload capsule builds processing.json): {record_path}")
+    paths = write_data_processes(records, outprefix_reg)
+    logger.info(f"Wrote {len(paths)} data_process.json files (upload capsule builds processing.json)")
 
     end_time = datetime.now(timezone.utc)    
     logger.info(f"Finish all steps, execution time: {end_time - start_time} s")
