@@ -136,13 +136,15 @@ class ImagePreprocessor:
         self.logger = logger
     
     def preprocess_image(
-        self, 
-        acquisition_path: str, 
-        zarr_image: np.ndarray, 
+        self,
+        acquisition_path: str,
+        zarr_image: np.ndarray,
         scale: List[float],
         ants_exaspim: ants.ANTsImage,
         dataset_id: str,
-        outprefix: str
+        outprefix: str,
+        dataset_path: Optional[str] = None,
+        level: Optional[int] = None,
     ) -> ants.ANTsImage:
         """
         Preprocess the input image including orientation checking and normalization.
@@ -184,31 +186,82 @@ class ImagePreprocessor:
         self.logger.info(
             f"Intensity normalization completed, execution time: {end_time - start_time} s -- image {ants_img}"
         )
-        # #------------------------
-        # # TODO, hardcode for 721332
-        # mask_path = "/data/721332_whole_brain_mask_25um.nii.gz"
-        # self.logger.info(f"Load brain mask from {mask_path}")
-        # mask_25um = ants.image_read(mask_path)
-        # ants_img = mask_25um * ants_img
-        # #------------------------
-        
+        # ------------------------------------------------------------------
+        # GOAL 3 (default): restrict registration with the flat-field mask that
+        # the fusion capsule fused using the SAME transforms as the CCF channel
+        # (fused_mask_ch.zarr). Loaded in the sample image's geometry here, then
+        # resampled + applied below — mirroring the previous manual-mask
+        # approach, now automatic for every run. Skips gracefully if absent.
+        # ------------------------------------------------------------------
+        mask_img = self._load_fused_mask(
+            acquisition_path, dataset_path, level, ants_img
+        )
+
         figpath = f"{outprefix}{dataset_id}_loaded_zarr_img"
         plot_antsimgs(ants_img, figpath, title=f"{dataset_id}_loaded_zarr_img", vmin=0, vmax=1.5)
         ants.image_write(ants_img, f"{outprefix}{dataset_id}_loaded_zarr_img.nii.gz")
-        
+
         # Resample to isotropic resolution
         self.logger.info(f"Resample OMEZarr image to the resolution of ants_exaspim")
         self.logger.info(f"ants_exaspim: {ants_exaspim}")
         self.logger.info(f"ants_img: {ants_img}")
-        
+
         ants_img = ants.resample_image(ants_img, ants_exaspim.spacing)
         self.logger.info(f"Resampled OMEZarr dataset: {ants_img}")
 
+        if mask_img is not None:
+            # Resample the mask to the template grid (nearest-neighbor), binarize,
+            # save as .nii.gz (the conversion deliverable), and multiply in.
+            mask_img = ants.resample_image(mask_img, ants_exaspim.spacing, interp_type=1)
+            mask_img = ants.threshold_image(mask_img, 1e-6, 1e12, 1, 0)
+            mask_nii = f"{outprefix}{dataset_id}_fused_mask.nii.gz"
+            ants.image_write(mask_img, mask_nii)
+            self.logger.info(f"Applying fused mask to restrict registration: {mask_nii}")
+            ants_img = ants_img * mask_img
+
         figpath = f"{outprefix}{dataset_id}_resampled_zarr_img"
-        plot_antsimgs(ants_img, figpath, title=f"{dataset_id}_resampled_zarr_img")        
+        plot_antsimgs(ants_img, figpath, title=f"{dataset_id}_resampled_zarr_img")
         ants.image_write(ants_img, f"{outprefix}{dataset_id}_resampled_zarr_img.nii.gz")
 
         return ants_img
+
+    def _load_fused_mask(
+        self,
+        acquisition_path: str,
+        dataset_path: Optional[str],
+        level: Optional[int],
+        reference_img: ants.ANTsImage,
+    ) -> Optional[ants.ANTsImage]:
+        """Load the fused flat-field mask (fused with the same transforms as the
+        CCF channel) at `level`, in the sample image's geometry. Returns an
+        ANTsImage or None if the mask cannot be located/read.
+
+        The fused mask sits next to the CCF channel in the asset
+        (fused_ccf_ch.zarr -> fused_mask_ch.zarr) and shares its multiscale grid,
+        so at the same level it is voxel-aligned with the loaded sample image.
+        """
+        if not dataset_path or level is None:
+            self.logger.info("No dataset_path/level provided; skipping fused mask.")
+            return None
+        # dataset_path is the fused input, e.g. .../fusion/fused_ccf_ch.zarr/ .
+        # The fused mask is its sibling .../fusion/fused_mask_ch.zarr (written by
+        # the fusion capsule with the same transforms). Derive from the parent
+        # so this works whether the input is the CCF channel or the signal.
+        fusion_dir = dataset_path.rstrip("/").rsplit("/", 1)[0]
+        mask_path = f"{fusion_dir}/fused_mask_ch.zarr/{level}"
+        try:
+            arr = zarr.open(mask_path, mode="r")
+            arr = np.squeeze(np.squeeze(np.array(arr), axis=0), axis=0)
+        except Exception as exc:  # mask not present (e.g. legacy subject) -> skip
+            self.logger.info(f"Fused mask unavailable at {mask_path} ({exc}); skipping mask.")
+            return None
+        # Mirror the sample image's orientation + geometry so the two align.
+        mask = check_orientation(acquisition_path, arr, self.logger)
+        mask.set_spacing(reference_img.spacing)
+        mask.set_direction(reference_img.direction)
+        mask.set_origin(reference_img.origin)
+        self.logger.info(f"Loaded fused mask {mask_path}: {mask}")
+        return mask
 
 
 class RegistrationProcessor:
@@ -481,9 +534,10 @@ class RegistrationPipeline:
         # Load templates
         ccf, ants_exaspim = self.template_loader.load_templates(reg_params, outprefix)
         
-        # Preprocess image
+        # Preprocess image (mask-restricted by default — Goal 3)
         ants_img = self.image_preprocessor.preprocess_image(
-            acquisition_path, zarr_image, scale, ants_exaspim, dataset_id, outprefix
+            acquisition_path, zarr_image, scale, ants_exaspim, dataset_id, outprefix,
+            dataset_path=inputs.get('dataset_path'), level=level,
         )
         ants_img_original = ants_img
 
