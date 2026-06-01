@@ -23,7 +23,7 @@ Usage (in a producer):
         code_url="https://github.com/AllenNeuralDynamics/aind-exaspim-ccf-registration.git",
         code_name="aind-exaspim-ccf-registration", code_version="0.0.1",
         parameters={"resolution_um": 25},
-        experimenters=["Di Wang"], output_path="ccf_alignment/",
+        experimenters=["Peter Grotz"], output_path="ccf_alignment/",
     )
     write_data_process(dp, "/results/ccf_alignment")
 """
