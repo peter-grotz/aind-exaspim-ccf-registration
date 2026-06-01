@@ -34,7 +34,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-PIPELINE_NAME = "aind-exaSPIM-ccf-registration"
+PIPELINE_NAME = "exaspim-data-processing"
 
 
 def _iso(dt) -> str | None:
