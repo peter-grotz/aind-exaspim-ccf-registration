@@ -27,19 +27,31 @@ from aind_exaspim_ccf_reg.utils import (
     create_logger, 
     read_json_as_dict, 
     prepare_config_sample, 
-    create_folder, 
-    generate_processing,
+    create_folder,
     extract_dataset_id
 )
 from aind_exaspim_ccf_reg.configs import PathLike, RegSchema
 from aind_exaspim_ccf_reg.preprocess import perc_normalization, check_orientation
 from aind_exaspim_ccf_reg.plots import plot_reg, plot_antsimgs
-from aind_data_schema.core.processing import DataProcess, ProcessName
+from aind_process_record import make_data_process, write_data_processes
 from aind_exaspim_ccf_reg.register import RegistrationPipeline
 from argschema import ArgSchemaParser
 
 __version__ = "0.0.1"
 code_url = "https://github.com/AllenNeuralDynamics/aind-exaspim-ccf-registration.git"
+
+
+def _apply_output_prefix(path: str) -> str:
+    """Test mode: when OUTPUT_PREFIX is set, read the fused image + mask from
+    where the fusion capsule wrote them ({OUTPUT_PREFIX}/<asset>/fusion/...),
+    not the production asset. Acquisition metadata is still read from the
+    original (aind-open-data) path. No effect when OUTPUT_PREFIX is unset."""
+    prefix = os.environ.get("OUTPUT_PREFIX")
+    if not prefix or "/fusion/" not in path:
+        return path
+    in_base, rest = path.split("/fusion/", 1)
+    asset = in_base.rstrip("/").split("/")[-1]
+    return f"{prefix.rstrip('/')}/{asset}/fusion/{rest}"
 
 def load_zarr(
     image_path: PathLike, 
@@ -143,6 +155,9 @@ def main() -> None:
     print(f"processing_manifest_file: {processing_manifest_file}")
 
     dataset_path = str(dataset_config["zarr_multiscale"]["input_uri"])
+    # Where to READ the fused image + mask (test mode redirects to OUTPUT_PREFIX,
+    # where the fusion capsule wrote them; production = the asset path itself).
+    fused_path = _apply_output_prefix(dataset_path)
     level = 3
     resolution = 25
 
@@ -177,7 +192,7 @@ def main() -> None:
     logger.info(f"acquisition_output: {acquisition_output}")
     
     example_input = {
-        "dataset_path": dataset_path,
+        "dataset_path": fused_path,
         "level": level,
         "resolution": resolution,
         "dataset_id": dataset_id,
@@ -204,8 +219,8 @@ def main() -> None:
 
     # ants_exaspim = ants.image_read(os.path.abspath("/data/exaspim_template_7subjects_nomask_10um_round6_template_only/fixed_median.nii.gz")) # 10um
 
-    data_processes = []
-    
+    records = []
+
     # Create ArgSchemaParser from example_input
     parser = ArgSchemaParser(schema_type=RegSchema, input_data=example_input)
     pipeline = RegistrationPipeline(logger)
@@ -215,26 +230,25 @@ def main() -> None:
     #-----------------------------------------------#
 
     start_date_time = datetime.now(timezone.utc)
-    image_path = f"{dataset_path}{level}"
+    image_path = f"{fused_path}{level}"
     image = load_zarr(image_path, logger)
     end_date_time = datetime.now(timezone.utc)
 
-    data_processes.append(
-        DataProcess(
-            name=ProcessName.IMAGE_IMPORTING,
-            software_version=__version__,
-            start_date_time=start_date_time,
-            end_date_time=end_date_time,
-            input_location=str(image_path),
-            output_location=str(image_path),
-            outputs={},
+    records.append(
+        make_data_process(
+            process_type="Image importing",
+            name="Image importing - 25 um",
+            start=start_date_time,
+            end=end_date_time,
             code_url=code_url,
+            code_name="aind-exaspim-ccf-registration",
             code_version=__version__,
             parameters={
                 "input_uri": dataset_path,
                 "level": level,
                 "resolution_um": resolution,
             },
+            experimenters=["Peter Grotz"],
             notes="Importing fused data for alignment",
         )
     )
@@ -250,16 +264,14 @@ def main() -> None:
     )
     end_date_time = datetime.now(timezone.utc)
 
-    data_processes.append(
-        DataProcess(
-            name=ProcessName.IMAGE_ATLAS_ALIGNMENT,
-            software_version=__version__,
-            start_date_time=start_date_time,
-            end_date_time=end_date_time,
-            input_location=str(image_path),
-            output_location=outprefix_reg,
-            outputs={},
+    records.append(
+        make_data_process(
+            process_type="Image atlas alignment",
+            name="Image atlas alignment - 25 um",
+            start=start_date_time,
+            end=end_date_time,
             code_url=code_url,
+            code_name="aind-exaspim-ccf-registration",
             code_version=__version__,
             parameters={
                 "level": level,
@@ -268,6 +280,8 @@ def main() -> None:
                 "sample_to_template_registration": example_input["reg_param_25um"],
                 "template_to_ccf_transforms": exaspim_to_ccf_transform_path,
             },
+            experimenters=["Peter Grotz"],
+            output_path="ccf_alignment/",
             notes="Template based registration: sample -> template -> CCF",
         )
     )
@@ -280,25 +294,24 @@ def main() -> None:
         # load zarr
         #-----------------------------------------------#
         start_date_time = datetime.now(timezone.utc)
-        image_path = f"{dataset_path}{level}"
+        image_path = f"{fused_path}{level}"
         image = load_zarr(image_path, logger)    
         end_date_time = datetime.now(timezone.utc)
-        data_processes.append(
-            DataProcess(
-                name=ProcessName.IMAGE_IMPORTING,
-                software_version=__version__,
-                start_date_time=start_date_time,
-                end_date_time=end_date_time,
-                input_location=str(image_path),
-                output_location=str(image_path),
-                outputs={},
+        records.append(
+            make_data_process(
+                process_type="Image importing",
+                name="Image importing - 10 um",
+                start=start_date_time,
+                end=end_date_time,
                 code_url=code_url,
+                code_name="aind-exaspim-ccf-registration",
                 code_version=__version__,
                 parameters={
                     "input_uri": dataset_path,
                     "level": level,
                     "resolution_um": resolution,
                 },
+                experimenters=["Peter Grotz"],
                 notes="Importing fused data for alignment",
             )
         )
@@ -315,16 +328,14 @@ def main() -> None:
         )
 
         end_date_time = datetime.now(timezone.utc)
-        data_processes.append(
-            DataProcess(
-                name=ProcessName.IMAGE_ATLAS_ALIGNMENT,
-                software_version=__version__,
-                start_date_time=start_date_time,
-                end_date_time=end_date_time,
-                input_location=str(image_path),
-                output_location=str(output_path),
-                outputs={},
+        records.append(
+            make_data_process(
+                process_type="Image atlas alignment",
+                name="Image atlas alignment - 10 um",
+                start=start_date_time,
+                end=end_date_time,
                 code_url=code_url,
+                code_name="aind-exaspim-ccf-registration",
                 code_version=__version__,
                 parameters={
                     "level": level,
@@ -334,20 +345,14 @@ def main() -> None:
                     "sample_to_template_transforms": brain_to_exaspim_transform_path,
                     "template_to_ccf_transforms": exaspim_to_ccf_transform_path,
                 },
+                experimenters=["Peter Grotz"],
+                output_path="ccf_alignment/",
                 notes=f"Registering 10um sample to CCF using transforms: {brain_to_exaspim_transform_path} and {exaspim_to_ccf_transform_path}",
             )
-        )  
+        )
 
-    processing_path = Path(outprefix_reg).joinpath("processing.json")
-
-    logger.info(f"Writing processing: {processing_path}")
-
-    generate_processing(
-        data_processes=data_processes,
-        dest_processing=outprefix_reg,
-        processor_full_name="Peter Grotz",
-        pipeline_version="0.0.1",
-    )
+    paths = write_data_processes(records, outprefix_reg)
+    logger.info(f"Wrote {len(paths)} data_process.json files (upload capsule builds processing.json)")
 
     end_time = datetime.now(timezone.utc)    
     logger.info(f"Finish all steps, execution time: {end_time - start_time} s")

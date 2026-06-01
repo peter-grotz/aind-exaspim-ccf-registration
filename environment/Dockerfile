@@ -22,7 +22,6 @@ RUN pip install -U --no-cache-dir \
     zarr==2.16.1 \
     argschema==3.0.4 \
     openpyxl==3.1.5 \
-    aind-data-schema==1.3.0 \
     scikit-image==0.19.3 \
     tifffile==2022.10.10 \
     bokeh==2.4.2 \
