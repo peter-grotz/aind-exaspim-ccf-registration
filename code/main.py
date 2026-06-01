@@ -40,6 +40,19 @@ from argschema import ArgSchemaParser
 __version__ = "0.0.1"
 code_url = "https://github.com/AllenNeuralDynamics/aind-exaspim-ccf-registration.git"
 
+
+def _apply_output_prefix(path: str) -> str:
+    """Test mode: when OUTPUT_PREFIX is set, read the fused image + mask from
+    where the fusion capsule wrote them ({OUTPUT_PREFIX}/<asset>/fusion/...),
+    not the production asset. Acquisition metadata is still read from the
+    original (aind-open-data) path. No effect when OUTPUT_PREFIX is unset."""
+    prefix = os.environ.get("OUTPUT_PREFIX")
+    if not prefix or "/fusion/" not in path:
+        return path
+    in_base, rest = path.split("/fusion/", 1)
+    asset = in_base.rstrip("/").split("/")[-1]
+    return f"{prefix.rstrip('/')}/{asset}/fusion/{rest}"
+
 def load_zarr(
     image_path: PathLike, 
     logger: logging.Logger
@@ -142,6 +155,9 @@ def main() -> None:
     print(f"processing_manifest_file: {processing_manifest_file}")
 
     dataset_path = str(dataset_config["zarr_multiscale"]["input_uri"])
+    # Where to READ the fused image + mask (test mode redirects to OUTPUT_PREFIX,
+    # where the fusion capsule wrote them; production = the asset path itself).
+    fused_path = _apply_output_prefix(dataset_path)
     level = 3
     resolution = 25
 
@@ -176,7 +192,7 @@ def main() -> None:
     logger.info(f"acquisition_output: {acquisition_output}")
     
     example_input = {
-        "dataset_path": dataset_path,
+        "dataset_path": fused_path,
         "level": level,
         "resolution": resolution,
         "dataset_id": dataset_id,
@@ -214,7 +230,7 @@ def main() -> None:
     #-----------------------------------------------#
 
     start_date_time = datetime.now(timezone.utc)
-    image_path = f"{dataset_path}{level}"
+    image_path = f"{fused_path}{level}"
     image = load_zarr(image_path, logger)
     end_date_time = datetime.now(timezone.utc)
 
@@ -278,7 +294,7 @@ def main() -> None:
         # load zarr
         #-----------------------------------------------#
         start_date_time = datetime.now(timezone.utc)
-        image_path = f"{dataset_path}{level}"
+        image_path = f"{fused_path}{level}"
         image = load_zarr(image_path, logger)    
         end_date_time = datetime.now(timezone.utc)
         records.append(
