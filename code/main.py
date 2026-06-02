@@ -286,6 +286,47 @@ def main() -> None:
         )
     )
 
+    # ------------------------------------------------------------------
+    # QC overlay (RESULTS-ONLY): warp the fused brain mask into exaSPIM-
+    # template space via the sample->template transform and overlay it on the
+    # exaSPIM template mask, so we can eyeball whether the mask used to restrict
+    # registration lands on the atlas-defined brain. Written under
+    # ccf_alignment/mask_qc/ -- which matches NONE of the upload capsule's
+    # PUBLISH_WHITELIST globs, so it stays in /results and is never pushed to S3.
+    # Skips silently when no fused mask was used (legacy subjects) or on error.
+    # ------------------------------------------------------------------
+    try:
+        fused_mask_nii = f"{outprefix}{dataset_id}_fused_mask.nii.gz"
+        template_mask_nii = "../data/exaSPIM_template_mask_25um_otsu.nii.gz"
+        if os.path.exists(fused_mask_nii) and os.path.exists(template_mask_nii):
+            from aind_exaspim_ccf_reg.plots import plot_mask_overlay
+            tmpl_mask = ants.image_read(template_mask_nii)
+            fused_mask = ants.image_read(fused_mask_nii)
+            # transformlist = [warp, affine] is the ANTs fwd convention returned
+            # by register(); nearestNeighbor keeps the warped mask binary.
+            warped_mask = ants.apply_transforms(
+                fixed=tmpl_mask,
+                moving=fused_mask,
+                transformlist=brain_to_exaspim_transform_path,
+                interpolator="nearestNeighbor",
+            )
+            qc_dir = f"{outprefix_reg}mask_qc/"
+            create_folder(dest_dir=qc_dir, verbose=False)
+            qc_png = f"{qc_dir}{dataset_id}_fused_mask_vs_template_mask.png"
+            dice = plot_mask_overlay(
+                warped_mask,
+                tmpl_mask,
+                figpath=qc_png,
+                title=f"{dataset_id}: fused brain mask (warped to template) vs exaSPIM template mask",
+                label_a="fused mask -> template",
+                label_b="template mask",
+            )
+            logger.info(f"Wrote mask QC overlay (results only, not uploaded): {qc_png} (Dice={dice})")
+        else:
+            logger.info("Skipping mask QC overlay: no fused mask present for this run.")
+    except Exception as exc:
+        logger.info(f"Mask QC overlay failed (non-fatal): {exc}")
+
     if level in [3, 6]:
         level = {3: 2, 6: 5}.get(level, level)    
         resolution = 10

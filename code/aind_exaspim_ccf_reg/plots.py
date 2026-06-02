@@ -84,6 +84,69 @@ def plot_antsimgs(
         plt.close()
 
 
+def plot_mask_overlay(
+    mask_a: ants.ANTsImage,
+    mask_b: ants.ANTsImage,
+    figpath: PathLike,
+    title: str = "",
+    label_a: str = "A",
+    label_b: str = "B",
+) -> Optional[float]:
+    """Overlay two binary masks (assumed on the same grid) in three orthogonal
+    mid-slices and save a PNG for QC.
+
+    mask_a is drawn red, mask_b green, so their overlap shows as yellow. A Dice
+    coefficient (2|A n B| / (|A| + |B|)) is computed and shown in the title as a
+    quick quantitative measure of agreement. Returns the Dice score (or None if
+    nothing was written).
+
+    Parameters
+    ----------
+    mask_a, mask_b : ants.ANTsImage
+        Binary (or thresholded) masks on the same voxel grid.
+    figpath : PathLike
+        Where to save the PNG.
+    title : str
+        Figure title.
+    label_a, label_b : str
+        Legend labels for the red/green masks.
+    """
+    if not figpath:
+        return None
+
+    a = (mask_a.numpy() > 0).astype(np.uint8)
+    b = (mask_b.numpy() > 0).astype(np.uint8)
+    if a.shape != b.shape:
+        # Different grids -> can't overlay meaningfully; skip rather than guess.
+        return None
+
+    inter = float(np.logical_and(a, b).sum())
+    dice = (2.0 * inter) / (float(a.sum()) + float(b.sum()) + 1e-8)
+
+    half = np.array(a.shape) // 2
+    slabs = [
+        (a[half[0], :, :], b[half[0], :, :]),
+        (a[:, half[1], :], b[:, half[1], :]),
+        (a[:, :, half[2]], b[:, :, half[2]]),
+    ]
+    fig, ax = plt.subplots(1, 3, figsize=(12, 6))
+    for k, (sa, sb) in enumerate(slabs):
+        rgb = np.zeros(sa.shape + (3,), dtype=float)
+        rgb[..., 0] = sa  # red   = mask_a
+        rgb[..., 1] = sb  # green = mask_b  (overlap -> yellow)
+        ax[k].imshow(rgb)
+        ax[k].set_axis_off()
+
+    fig.suptitle(
+        f"{title}\nDice = {dice:.3f}   "
+        f"(red = {label_a}, green = {label_b}, yellow = overlap)",
+        y=0.98,
+    )
+    plt.savefig(figpath, bbox_inches="tight", pad_inches=0.1, dpi=120)
+    plt.close()
+    return dice
+
+
 def plot_reg(
     moving: ants.ANTsImage,
     fixed: ants.ANTsImage, 
