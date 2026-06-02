@@ -229,35 +229,16 @@ def main() -> None:
     # Load OMEZarr image 
     #-----------------------------------------------#
 
+    # Import + 25 um atlas alignment are recorded as ONE process: the image load
+    # is folded into the alignment record (start_date_time spans the load), so
+    # there is no separate "Image importing" record.
     start_date_time = datetime.now(timezone.utc)
     image_path = f"{fused_path}{level}"
     image = load_zarr(image_path, logger)
-    end_date_time = datetime.now(timezone.utc)
-
-    records.append(
-        make_data_process(
-            process_type="Image importing",
-            name="Image importing - 25 um",
-            start=start_date_time,
-            end=end_date_time,
-            code_url=code_url,
-            code_name="aind-exaspim-ccf-registration",
-            code_version=__version__,
-            parameters={
-                "input_uri": dataset_path,
-                "level": level,
-                "resolution_um": resolution,
-            },
-            experimenters=["Peter Grotz"],
-            notes="Importing fused data for alignment",
-        )
-    )
 
     #-----------------------------------------------#
     # registration
     #-----------------------------------------------#
-    start_date_time = datetime.now(timezone.utc)
-
     brain_to_exaspim_transform_path = pipeline.register(
         parser=parser,
         zarr_image=image,
@@ -274,6 +255,7 @@ def main() -> None:
             code_name="aind-exaspim-ccf-registration",
             code_version=__version__,
             parameters={
+                "input_uri": dataset_path,
                 "level": level,
                 "resolution_um": resolution,
                 "dataset_id": dataset_id,
@@ -282,7 +264,7 @@ def main() -> None:
             },
             experimenters=["Peter Grotz"],
             output_path="ccf_alignment/",
-            notes="Template based registration: sample -> template -> CCF",
+            notes="Import + template-based registration (25 um): sample -> template -> CCF",
         )
     )
 
@@ -334,40 +316,20 @@ def main() -> None:
         #-----------------------------------------------#
         # load zarr
         #-----------------------------------------------#
+        # Import + 10 um atlas alignment recorded as ONE process (import folded in).
         start_date_time = datetime.now(timezone.utc)
         image_path = f"{fused_path}{level}"
-        image = load_zarr(image_path, logger)    
-        end_date_time = datetime.now(timezone.utc)
-        records.append(
-            make_data_process(
-                process_type="Image importing",
-                name="Image importing - 10 um",
-                start=start_date_time,
-                end=end_date_time,
-                code_url=code_url,
-                code_name="aind-exaspim-ccf-registration",
-                code_version=__version__,
-                parameters={
-                    "input_uri": dataset_path,
-                    "level": level,
-                    "resolution_um": resolution,
-                },
-                experimenters=["Peter Grotz"],
-                notes="Importing fused data for alignment",
-            )
-        )
+        image = load_zarr(image_path, logger)
 
         #-----------------------------------------------#
         # apply transforms to 10um
-        #-----------------------------------------------#    
-        start_date_time = datetime.now(timezone.utc)
+        #-----------------------------------------------#
         output_path = pipeline.apply_transforms_to_10um(
             parser=parser,
             zarr_image=image,
             brain_to_exaspim_transform_path=brain_to_exaspim_transform_path,
             dataset_id=f"{dataset_id}_10um",
         )
-
         end_date_time = datetime.now(timezone.utc)
         records.append(
             make_data_process(
@@ -379,6 +341,7 @@ def main() -> None:
                 code_name="aind-exaspim-ccf-registration",
                 code_version=__version__,
                 parameters={
+                    "input_uri": dataset_path,
                     "level": level,
                     "resolution_um": resolution,
                     "dataset_id": f"{dataset_id}_10um",
@@ -388,7 +351,7 @@ def main() -> None:
                 },
                 experimenters=["Peter Grotz"],
                 output_path="ccf_alignment/",
-                notes=f"Registering 10um sample to CCF using transforms: {brain_to_exaspim_transform_path} and {exaspim_to_ccf_transform_path}",
+                notes=f"Import + 10um sample->CCF registration using transforms: {brain_to_exaspim_transform_path} and {exaspim_to_ccf_transform_path}",
             )
         )
 
