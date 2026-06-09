@@ -7,3 +7,7 @@ python -u main.py "$@"
 sh run_register_ccf_annotation_10um.sh
 
 python -u finalize_registration_metadata.py
+
+# Reverse-transform the CCF region meshes (.obj) into sample space, reusing the
+# transforms produced above. Non-fatal: a failure here must not fail registration.
+sh run_invert_ccf_objs.sh || echo "CCF obj inversion failed (non-fatal)"
