@@ -87,6 +87,10 @@ def qc_overlay(reference_nii, all_verts_um, out_png, mesh_units_um):
         sp = np.array(ref.spacing) * 1000.0  # mm -> um
         # vertices (sample-space, mesh units) -> reference voxel indices
         vox = (all_verts_um * (mesh_units_um) ) / sp  # approx; QC only
+        # cap plotted points so the scatter stays fast for dense meshes
+        CAP = 200000
+        if vox.shape[0] > CAP:
+            vox = vox[:: max(1, vox.shape[0] // CAP)]
         half = np.array(arr.shape) // 2
         fig, ax = plt.subplots(1, 3, figsize=(12, 6))
         for k in range(3):
@@ -134,19 +138,35 @@ def main():
     out_root = os.path.join(args.output_dir, "ccf_obj_to_sample")
     os.makedirs(out_root, exist_ok=True)
 
-    all_verts = []
+    # Read every mesh once, concatenate all vertices, and transform them in a
+    # SINGLE apply_transforms_to_points call. This is the key cost control: each
+    # call re-reads the warp displacement fields + spawns the ANTs point binary,
+    # so a per-mesh loop over hundreds-thousands of CCF meshes would reload the
+    # warps that many times (minutes -> hours). Batched, it is one warp load.
+    meshes, chunks = [], []   # meshes: (rel_path, lines, vert_idx); chunks: (Ni,3) verts
     for obj in objs:
         lines, vidx, verts = read_obj(obj)
         if verts.size == 0:
             continue
-        new_verts = transform_ccf_to_sample(verts, transformlist, whichtoinvert, args.mesh_units_um)
-        all_verts.append(new_verts)
-        rel = os.path.relpath(obj, args.obj_dir)
-        write_obj(os.path.join(out_root, rel), lines, vidx, new_verts)
-    print(f"wrote {len(objs)} warped meshes to {out_root}")
+        meshes.append((os.path.relpath(obj, args.obj_dir), lines, vidx))
+        chunks.append(verts)
+    if not chunks:
+        print("no vertices found in any .obj; nothing to do")
+        return
 
-    if args.reference_image and all_verts:
-        qc_overlay(args.reference_image, np.vstack(all_verts),
+    counts = [c.shape[0] for c in chunks]
+    all_in = np.vstack(chunks)
+    print(f"transforming {all_in.shape[0]} vertices from {len(chunks)} meshes in ONE call")
+    all_out = transform_ccf_to_sample(all_in, transformlist, whichtoinvert, args.mesh_units_um)
+
+    offset = 0
+    for (rel, lines, vidx), n in zip(meshes, counts):
+        write_obj(os.path.join(out_root, rel), lines, vidx, all_out[offset:offset + n])
+        offset += n
+    print(f"wrote {len(meshes)} warped meshes to {out_root}")
+
+    if args.reference_image:
+        qc_overlay(args.reference_image, all_out,
                    os.path.join(out_root, "qc", "ccf_objs_vs_annotation.png"), args.mesh_units_um)
 
     # metadata record (stdlib helper, vendored in this capsule)
