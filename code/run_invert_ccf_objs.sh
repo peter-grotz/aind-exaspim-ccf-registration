@@ -20,7 +20,12 @@ CCF_TO_TEMPLATE_2="/data/reg_exaspim_template_to_ccf_25um_v1.4/1InverseWarp.nii.
 TEMPLATE_TO_SAMPLE_1="/results/ccf_alignment/${SUBJECTID}_to_exaSPIM_SyN_0GenericAffine.mat"
 TEMPLATE_TO_SAMPLE_2="/results/ccf_alignment/${SUBJECTID}_to_exaSPIM_SyN_1InverseWarp.nii.gz"
 
-# Already-inverted annotation in sample space -> used for the QC overlay.
+# CCF average_template -> defines the CCF physical frame the mesh um are mapped
+# into (same space the transforms were computed in). 10 vs 25 um share the same
+# physical frame, so either works.
+CCF_TEMPLATE="../data/allen_mouse_ccf/average_template/average_template_25.nii.gz"
+
+# Already-inverted annotation in sample space -> defines the OUTPUT frame + QC.
 REFERENCE_IMAGE="/results/ccf_alignment/ccf_anno_to_sample/ccf_anno_in_sample_space.nii.gz"
 
 OUTPUT_DIR="/results/ccf_alignment"
@@ -40,6 +45,7 @@ python invert_ccf_objs.py \
     --output-dir "$OUTPUT_DIR" \
     --ccf-to-template-transforms "$CCF_TO_TEMPLATE_1" "$CCF_TO_TEMPLATE_2" \
     --template-to-sample-transforms "$TEMPLATE_TO_SAMPLE_1" "$TEMPLATE_TO_SAMPLE_2" \
+    --ccf-template "$CCF_TEMPLATE" \
     --reference-image "$REFERENCE_IMAGE" \
     --mesh-units-um 1.0
 

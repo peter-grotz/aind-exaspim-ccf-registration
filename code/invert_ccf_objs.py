@@ -59,20 +59,48 @@ def write_obj(path, lines, vert_idx, new_verts):
     open(path, "w").write("\n".join(lines) + "\n")
 
 
-# ----------------------------- the point transform ----------------------------
-def transform_ccf_to_sample(verts, transformlist, whichtoinvert, mesh_units_um):
-    """Map CCF mesh vertices -> sample space using ANTs point transforms.
+# ---- geometry: ANTs array-index <-> physical, applying the image's affine -----
+# This is the step the old `verts/1000` omitted. The mesh is in CCF *array-order
+# micrometers* (it overlays the CCF voxel grid directly), but ANTs point
+# transforms work in *physical* space, and the CCF volume's affine PERMUTES +
+# FLIPS axes. So we must go array -> physical (via the CCF image) before the warp
+# and physical -> array (via the sample image) after, or the meshes come out
+# rotated/mirrored.
+def _index_to_physical(idx, img):
+    sp = np.asarray(img.spacing, float)
+    org = np.asarray(img.origin, float)
+    d = np.asarray(img.direction, float).reshape(3, 3)
+    return org + (d @ (idx * sp).T).T          # (N,3) physical (ANTs LPS) mm
 
-    verts: (N,3) in the mesh's native units. mesh_units_um converts to mm for
-    ANTs physical space (Allen CCF meshes are typically micrometers -> /1000).
+
+def _physical_to_index(phys, img):
+    sp = np.asarray(img.spacing, float)
+    org = np.asarray(img.origin, float)
+    d = np.asarray(img.direction, float).reshape(3, 3)
+    return (np.linalg.inv(d) @ (np.asarray(phys, float) - org).T).T / sp
+
+
+def transform_ccf_to_sample(verts, transformlist, whichtoinvert, mesh_units_um, ccf_img, sample_img):
+    """Map CCF mesh vertices -> sample space, applying each image's affine.
+
+    verts: (N,3) CCF array-order micrometers (x mesh_units_um -> um).
+    Returns (N,3) in the SAMPLE image's array-order micrometers, so the output
+    overlays the sample volume the same way the input overlaid the CCF volume.
     """
     if pd is None:
         raise RuntimeError("pandas required for ants.apply_transforms_to_points")
-    pts_mm = verts * (mesh_units_um / 1000.0)
-    df = pd.DataFrame(pts_mm, columns=["x", "y", "z"])
+    # 1) mesh um -> CCF array index -> CCF physical (applies the CCF affine)
+    ccf_vox_um = np.asarray(ccf_img.spacing, float) * 1000.0
+    idx_ccf = (verts * mesh_units_um) / ccf_vox_um
+    phys_ccf = _index_to_physical(idx_ccf, ccf_img)
+    # 2) warp CCF physical -> sample physical
+    df = pd.DataFrame(phys_ccf, columns=["x", "y", "z"])
     out = ants.apply_transforms_to_points(3, df, transformlist, whichtoinvert=whichtoinvert)
-    out_mm = out[["x", "y", "z"]].to_numpy()
-    return out_mm / (mesh_units_um / 1000.0)  # back to the mesh's native units (sample space)
+    phys_sample = out[["x", "y", "z"]].to_numpy()
+    # 3) sample physical -> sample array index -> sample um (applies the sample affine)
+    idx_sample = _physical_to_index(phys_sample, sample_img)
+    sample_vox_um = np.asarray(sample_img.spacing, float) * 1000.0
+    return idx_sample * sample_vox_um
 
 
 def qc_overlay(reference_nii, all_verts_um, out_png, mesh_units_um):
@@ -117,14 +145,22 @@ def main():
     p.add_argument("--output-dir", required=True)
     p.add_argument("--ccf-to-template-transforms", nargs="+", required=True)
     p.add_argument("--template-to-sample-transforms", nargs="+", required=True)
-    p.add_argument("--reference-image", default=None,
-                   help="inverted annotation in sample space (for the QC overlay)")
+    p.add_argument("--ccf-template", required=True,
+                   help="CCF average_template image (defines the CCF physical frame the "
+                        "mesh um are converted into; same space the transforms were computed in)")
+    p.add_argument("--reference-image", required=True,
+                   help="inverted annotation in sample space; defines the OUTPUT frame "
+                        "(warped meshes are written in its array-um) and drives the QC overlay")
     p.add_argument("--mesh-units-um", type=float, default=1.0,
                    help="micrometers per mesh unit (Allen CCF meshes are usually um=1.0)")
     p.add_argument("--start-iso", default=None)
     args = p.parse_args()
 
     start = args.start_iso or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    # Images whose affines define the CCF (input) and sample (output) frames.
+    ccf_img = ants.image_read(args.ccf_template)
+    sample_img = ants.image_read(args.reference_image)
 
     # ----- VALIDATE ON FIRST RUN: order + whichtoinvert for POINTS -----
     # Mirror of the annotation image chain (CCF->template->sample, each affine
@@ -157,7 +193,8 @@ def main():
     counts = [c.shape[0] for c in chunks]
     all_in = np.vstack(chunks)
     print(f"transforming {all_in.shape[0]} vertices from {len(chunks)} meshes in ONE call")
-    all_out = transform_ccf_to_sample(all_in, transformlist, whichtoinvert, args.mesh_units_um)
+    all_out = transform_ccf_to_sample(all_in, transformlist, whichtoinvert,
+                                      args.mesh_units_um, ccf_img, sample_img)
 
     offset = 0
     for (rel, lines, vidx), n in zip(meshes, counts):
@@ -165,9 +202,10 @@ def main():
         offset += n
     print(f"wrote {len(meshes)} warped meshes to {out_root}")
 
-    if args.reference_image:
-        qc_overlay(args.reference_image, all_out,
-                   os.path.join(out_root, "qc", "ccf_objs_vs_annotation.png"), args.mesh_units_um)
+    # all_out is already in the sample image's array-um, so the QC maps it to
+    # voxels with unit scale 1.0 (no further mesh_units_um scaling).
+    qc_overlay(args.reference_image, all_out,
+               os.path.join(out_root, "qc", "ccf_objs_vs_annotation.png"), 1.0)
 
     # metadata record (stdlib helper, vendored in this capsule)
     try:
