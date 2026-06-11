@@ -25,7 +25,16 @@ TEMPLATE_TO_SAMPLE_2="/results/ccf_alignment/${SUBJECTID}_to_exaSPIM_SyN_1Invers
 # physical frame, so either works.
 CCF_TEMPLATE="../data/allen_mouse_ccf/average_template/average_template_25.nii.gz"
 
-# Already-inverted annotation in sample space -> defines the OUTPUT frame + QC.
+# The registration's loaded/sample zarr image: carries the REORIENTED grid affine
+# the SyN transforms map into (this is the same file the annotation inversion uses
+# as its --sample_image_path). Warped points are converted to indices on this grid,
+# then the registration's swaps/flips are undone to reach native sample space.
+REORIENTED_REFERENCE="/results/ccf_alignment/registration_metadata/${SUBJECTID}_10um_loaded_zarr_img.nii.gz"
+
+# Acquisition metadata -> source of the swaps/flips check_orientation applied.
+ACQUISITION="/results/ccf_alignment/registration_metadata/acquisition_${SUBJECTID}.json"
+
+# Already-inverted annotation in sample space -> native-frame QC target.
 REFERENCE_IMAGE="/results/ccf_alignment/ccf_anno_to_sample/ccf_anno_in_sample_space.nii.gz"
 
 OUTPUT_DIR="/results/ccf_alignment"
@@ -46,6 +55,8 @@ python invert_ccf_objs.py \
     --ccf-to-template-transforms "$CCF_TO_TEMPLATE_1" "$CCF_TO_TEMPLATE_2" \
     --template-to-sample-transforms "$TEMPLATE_TO_SAMPLE_1" "$TEMPLATE_TO_SAMPLE_2" \
     --ccf-template "$CCF_TEMPLATE" \
+    --reoriented-reference "$REORIENTED_REFERENCE" \
+    --acquisition "$ACQUISITION" \
     --reference-image "$REFERENCE_IMAGE" \
     --mesh-units-um 1.0
 

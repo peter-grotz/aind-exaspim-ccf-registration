@@ -12,19 +12,29 @@ inversion uses):
   CCF -> template   : reg_exaspim_template_to_ccf {0GenericAffine.mat, 1InverseWarp.nii.gz}
   template -> sample: {id}_to_exaSPIM_SyN          {0GenericAffine.mat, 1InverseWarp.nii.gz}
 
-================================  VALIDATE ON FIRST RUN  ======================
-ANTs transforms points in the OPPOSITE direction from images, so the two knobs
-below MUST be confirmed against the already-inverted annotation
-(ccf_anno_in_sample_space) via the --reference-image QC overlay this writes:
-  * TRANSFORM_DIRECTION (the transformlist order + whichtoinvert), and
-  * MESH_UNITS_UM (the mesh<->physical unit/orientation convention).
-If the QC overlay shows the meshes NOT tracking the annotation regions, flip the
-transformlist/whichtoinvert and/or fix the unit convention, then re-run. Do not
-trust/publish the output until the overlay confirms alignment.
+=============================  ORIENTATION (the real fix)  ===================
+The registration reorients the raw zarr BEFORE registering (check_orientation ->
+adjust_array(swaps, flips)), so the SyN transforms -- and therefore the warped
+points -- live in that REORIENTED frame. The annotation inversion returns to the
+native zarr frame by calling adjust_array_reverse(inv_swaps, inv_flips) on the
+label array. This script reproduces that exact remap for POINTS (see
+_reverse_orient_indices, verified element-for-element against adjust_array_reverse).
+Two earlier bugs caused the "90-degrees-off / wrong-axis / in-front-of-the-volume"
+symptom: (1) physical->index used the native 1mm-spacing ccf_anno_in_sample_space
+instead of the actual reoriented registration grid, and (2) the swaps/flips were
+never undone. Both are fixed: --reoriented-reference supplies the registration
+grid affine, --acquisition supplies the swaps/flips to invert.
+
+Still confirm on first run via the --reference-image QC overlay:
+  * TRANSFORM_DIRECTION (transformlist order + whichtoinvert), and
+  * MESH_UNITS_UM (mesh unit convention).
+If the meshes still don't track the annotation regions, flip the
+transformlist/whichtoinvert; the orientation itself is now handled analytically.
 ==============================================================================
 """
 import argparse
 import glob
+import json
 import os
 from datetime import datetime, timezone
 
@@ -35,6 +45,10 @@ try:
     import pandas as pd
 except Exception:  # pandas ships with the capsule's stack; guard just in case
     pd = None
+
+# get_adjustments lives in the capsule package; we derive the SAME swaps/flips the
+# registration used, so we can UNDO them on the points (see orientation note below).
+from aind_exaspim_ccf_reg.preprocess import get_adjustments
 
 
 # --- tiny .obj I/O: transform only "v" (vertex) lines, keep everything else ---
@@ -80,12 +94,62 @@ def _physical_to_index(phys, img):
     return (np.linalg.inv(d) @ (np.asarray(phys, float) - org).T).T / sp
 
 
-def transform_ccf_to_sample(verts, transformlist, whichtoinvert, mesh_units_um, ccf_img, sample_img):
-    """Map CCF mesh vertices -> sample space, applying each image's affine.
+# ---- the orientation reversal the annotation does, expressed for POINTS --------
+# Before registration, check_orientation() reorients the raw zarr with
+# adjust_array(swaps, flips), so the SyN transforms (and therefore the warped
+# POINTS) live in that *reoriented* frame. The annotation inversion gets back to
+# the native zarr frame by calling adjust_array_reverse(inv_swaps, inv_flips) on
+# the resampled label ARRAY. A point/vertex can't be "flipped/moved" as an array,
+# so we reproduce the exact same index remap analytically:
+#   * a flip of axis a:  index_a -> (Sr[a]-1) - index_a   (Sr = reoriented shape)
+#   * the axis move:     n[i] = flipped[order[i]]         (order = np.moveaxis order)
+# This map was verified element-for-element against adjust_array_reverse for every
+# swap/flip configuration (incl. the observed [(2,0),(1,2),(0,1)]).
+def _acquisition_swaps_flips(acquisition_path):
+    """Return (swaps, flips) exactly as the registration computed them, by
+    reading the acquisition metadata and the beta/alpha-scope direction map."""
+    with open(acquisition_path, "r") as f:
+        metadata = json.load(f)
+    first_tile = metadata["tiles"][0]["file_name"]
+    if "tile_000000_ch_" in first_tile:  # beta scope
+        ccf_directions = {0: "Anterior_to_posterior", 1: "Superior_to_inferior", 2: "Left_to_right"}
+    else:                                # alpha scope
+        ccf_directions = {0: "Posterior_to_anterior", 1: "Inferior_to_superior", 2: "Left_to_right"}
+    return get_adjustments(metadata["axes"], ccf_directions)
+
+
+def _moveaxis_order(ndim, source, destination):
+    """The transpose order np.moveaxis(a, source, destination) uses internally."""
+    order = [n for n in range(ndim) if n not in source]
+    for dest, src in sorted(zip(destination, source)):
+        order.insert(dest, src)
+    return order
+
+
+def _reverse_orient_indices(idx_reor, reor_shape, inv_swaps, inv_flips):
+    """Map reoriented-frame array indices -> native zarr-frame array indices,
+    reproducing adjust_array_reverse(arr, inv_swaps, inv_flips). Also returns the
+    axis `order` so the caller can permute the voxel size the same way."""
+    r = np.asarray(idx_reor, float).copy()
+    for a in inv_flips:
+        r[:, a] = (reor_shape[a] - 1) - r[:, a]
+    if inv_swaps:
+        in_ax, out_ax = zip(*inv_swaps)
+        order = _moveaxis_order(3, in_ax, out_ax)
+    else:
+        order = [0, 1, 2]
+    return r[:, order], order
+
+
+def transform_ccf_to_sample(verts, transformlist, whichtoinvert, mesh_units_um,
+                            ccf_img, reoriented_img, inv_swaps, inv_flips):
+    """Map CCF mesh vertices -> NATIVE sample space.
 
     verts: (N,3) CCF array-order micrometers (x mesh_units_um -> um).
-    Returns (N,3) in the SAMPLE image's array-order micrometers, so the output
-    overlays the sample volume the same way the input overlaid the CCF volume.
+    Returns (warped_verts_um (N,3), native_voxel_um (3,)) where warped_verts_um is
+    in the native zarr array orientation (same frame as ccf_anno_in_sample_space),
+    scaled by the native voxel size, so it overlays the sample volume the way the
+    input overlaid the CCF volume.
     """
     if pd is None:
         raise RuntimeError("pandas required for ants.apply_transforms_to_points")
@@ -93,28 +157,36 @@ def transform_ccf_to_sample(verts, transformlist, whichtoinvert, mesh_units_um, 
     ccf_vox_um = np.asarray(ccf_img.spacing, float) * 1000.0
     idx_ccf = (verts * mesh_units_um) / ccf_vox_um
     phys_ccf = _index_to_physical(idx_ccf, ccf_img)
-    # 2) warp CCF physical -> sample physical
+    # 2) warp CCF physical -> REORIENTED sample physical (the frame the SyN
+    #    transforms were computed in)
     df = pd.DataFrame(phys_ccf, columns=["x", "y", "z"])
     out = ants.apply_transforms_to_points(3, df, transformlist, whichtoinvert=whichtoinvert)
     phys_sample = out[["x", "y", "z"]].to_numpy()
-    # 3) sample physical -> sample array index -> sample um (applies the sample affine)
-    idx_sample = _physical_to_index(phys_sample, sample_img)
-    sample_vox_um = np.asarray(sample_img.spacing, float) * 1000.0
-    return idx_sample * sample_vox_um
+    # 3) reoriented physical -> reoriented array index, using the ACTUAL registration
+    #    grid affine (loaded zarr image: same oriented direction/origin the SyN used).
+    idx_reor = _physical_to_index(phys_sample, reoriented_img)
+    # 4) undo the registration's orientation (swaps/flips) -> native zarr indices
+    reor_shape = np.asarray(reoriented_img.shape, int)
+    idx_native, order = _reverse_orient_indices(idx_reor, reor_shape, inv_swaps, inv_flips)
+    # 5) native index -> native um (voxel size permutes the same way as the axes)
+    reor_vox_um = np.asarray(reoriented_img.spacing, float) * 1000.0
+    native_vox_um = reor_vox_um[order]
+    return idx_native * native_vox_um, native_vox_um
 
 
-def qc_overlay(reference_nii, all_verts_um, out_png, mesh_units_um):
+def qc_overlay(reference_nii, all_verts_um, out_png, native_vox_um):
     """Scatter transformed vertices over mid-slices of the inverted annotation
-    so a human can confirm the meshes land on the annotation regions."""
+    so a human can confirm the meshes land on the annotation regions. The output
+    meshes are in native um; ccf_anno_in_sample_space is in native array indices,
+    so vertices map to its voxels by dividing by the native voxel size."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         ref = ants.image_read(reference_nii)
         arr = ref.numpy()
-        sp = np.array(ref.spacing) * 1000.0  # mm -> um
-        # vertices (sample-space, mesh units) -> reference voxel indices
-        vox = (all_verts_um * (mesh_units_um) ) / sp  # approx; QC only
+        # native um -> native voxel index (same frame/shape as the reference array)
+        vox = all_verts_um / np.asarray(native_vox_um, float)
         # cap plotted points so the scatter stays fast for dense meshes
         CAP = 200000
         if vox.shape[0] > CAP:
@@ -148,9 +220,17 @@ def main():
     p.add_argument("--ccf-template", required=True,
                    help="CCF average_template image (defines the CCF physical frame the "
                         "mesh um are converted into; same space the transforms were computed in)")
+    p.add_argument("--reoriented-reference", required=True,
+                   help="the registration's loaded/sample zarr image "
+                        "(<id>_10um_loaded_zarr_img.nii.gz) -- carries the REORIENTED grid "
+                        "affine (direction/origin) the SyN transforms map into; used for "
+                        "physical->index before the orientation is undone")
+    p.add_argument("--acquisition", required=True,
+                   help="acquisition_<id>.json -- source of the swaps/flips the registration "
+                        "applied (check_orientation); we invert them to return to native space")
     p.add_argument("--reference-image", required=True,
-                   help="inverted annotation in sample space; defines the OUTPUT frame "
-                        "(warped meshes are written in its array-um) and drives the QC overlay")
+                   help="inverted annotation in sample space (ccf_anno_in_sample_space.nii.gz); "
+                        "native-frame QC target the warped meshes must overlay")
     p.add_argument("--mesh-units-um", type=float, default=1.0,
                    help="micrometers per mesh unit (Allen CCF meshes are usually um=1.0)")
     p.add_argument("--start-iso", default=None)
@@ -158,9 +238,17 @@ def main():
 
     start = args.start_iso or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    # Images whose affines define the CCF (input) and sample (output) frames.
+    # Affines: CCF (input) frame, and the REORIENTED registration grid the points
+    # land in. The native output frame is recovered by undoing the swaps/flips.
     ccf_img = ants.image_read(args.ccf_template)
-    sample_img = ants.image_read(args.reference_image)
+    reoriented_img = ants.image_read(args.reoriented_reference)
+
+    # Same swaps/flips the registration applied, inverted exactly as the annotation
+    # inversion does (register_ccf_annotation.py): flips unchanged, swaps reversed.
+    swaps, flips = _acquisition_swaps_flips(args.acquisition)
+    inv_swaps = [(b, a) for (a, b) in reversed(swaps)]
+    inv_flips = flips
+    print(f"orientation swaps={swaps} flips={flips} -> inv_swaps={inv_swaps} inv_flips={inv_flips}")
 
     # ----- VALIDATE ON FIRST RUN: order + whichtoinvert for POINTS -----
     # Mirror of the annotation image chain (CCF->template->sample, each affine
@@ -193,8 +281,9 @@ def main():
     counts = [c.shape[0] for c in chunks]
     all_in = np.vstack(chunks)
     print(f"transforming {all_in.shape[0]} vertices from {len(chunks)} meshes in ONE call")
-    all_out = transform_ccf_to_sample(all_in, transformlist, whichtoinvert,
-                                      args.mesh_units_um, ccf_img, sample_img)
+    all_out, native_vox_um = transform_ccf_to_sample(
+        all_in, transformlist, whichtoinvert, args.mesh_units_um,
+        ccf_img, reoriented_img, inv_swaps, inv_flips)
 
     offset = 0
     for (rel, lines, vidx), n in zip(meshes, counts):
@@ -202,10 +291,10 @@ def main():
         offset += n
     print(f"wrote {len(meshes)} warped meshes to {out_root}")
 
-    # all_out is already in the sample image's array-um, so the QC maps it to
-    # voxels with unit scale 1.0 (no further mesh_units_um scaling).
+    # all_out is in native um; ccf_anno_in_sample_space is in native array indices,
+    # so QC divides by the native voxel size to land vertices on the right voxels.
     qc_overlay(args.reference_image, all_out,
-               os.path.join(out_root, "qc", "ccf_objs_vs_annotation.png"), 1.0)
+               os.path.join(out_root, "qc", "ccf_objs_vs_annotation.png"), native_vox_um)
 
     # metadata record (stdlib helper, vendored in this capsule)
     try:
@@ -221,7 +310,8 @@ def main():
             run_script="/code/run_invert_ccf_objs.sh",
             experimenters=["Peter Grotz"],
             parameters={"n_meshes": len(objs), "mesh_units_um": args.mesh_units_um,
-                        "transformlist": transformlist, "whichtoinvert": whichtoinvert},
+                        "transformlist": transformlist, "whichtoinvert": whichtoinvert,
+                        "inv_swaps": inv_swaps, "inv_flips": inv_flips},
             output_path="ccf_alignment/ccf_obj_to_sample/",
             notes="Reverse-transforms CCF region surface meshes into sample space "
                   "(point transform of vertices through the CCF->template->sample chain).",
