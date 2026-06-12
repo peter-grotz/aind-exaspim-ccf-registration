@@ -249,11 +249,21 @@ def _build_direction_candidates(ct, ts):
         ("warp-first-rev", [syn_iwarp, syn_aff, reg_iwarp, reg_aff], [False, True, False, True]),
     ]
     if reg_w and syn_w:
-        # forward fields, affines applied forward -- the usual "points" sense
+        # FORWARD fields, affines NOT inverted -- the correct "push a point forward"
+        # sense (opposite to the annotation's image PULL). The annotation uses the
+        # inverse warps because resampling an image maps fixed->moving; a mesh moves
+        # points along the content direction (CCF->sample), so it needs the forward
+        # 1Warp + affine, which is the [warp, affine] convention main.py already uses
+        # for forward motion (main.py:180-182). Try both the ANTs [warp, affine]
+        # order and the [affine, warp] order, and both stage orders, so one run finds
+        # the exact composition.
         cands += [
-            ("pts-fwd-rev",        [syn_aff, syn_w, reg_aff, reg_w], [False, False, False, False]),
-            ("pts-fwd",            [reg_aff, reg_w, syn_aff, syn_w], [False, False, False, False]),
-            ("pts-fwd-affinv-rev", [syn_aff, syn_w, reg_aff, reg_w], [True, False, True, False]),
+            # [warp, affine] per stage (the ANTs fwd convention)
+            ("pts-fwd-wa",     [reg_w, reg_aff, syn_w, syn_aff], [False, False, False, False]),
+            ("pts-fwd-wa-rev", [syn_w, syn_aff, reg_w, reg_aff], [False, False, False, False]),
+            # [affine, warp] per stage (other order)
+            ("pts-fwd-aw",     [reg_aff, reg_w, syn_aff, syn_w], [False, False, False, False]),
+            ("pts-fwd-aw-rev", [syn_aff, syn_w, reg_aff, reg_w], [False, False, False, False]),
         ]
     return cands
 
