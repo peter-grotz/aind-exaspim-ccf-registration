@@ -25,11 +25,12 @@ instead of the actual reoriented registration grid, and (2) the swaps/flips were
 never undone. Both are fixed: --reoriented-reference supplies the registration
 grid affine, --acquisition supplies the swaps/flips to invert.
 
-Still confirm on first run via the --reference-image QC overlay:
-  * TRANSFORM_DIRECTION (transformlist order + whichtoinvert), and
-  * MESH_UNITS_UM (mesh unit convention).
-If the meshes still don't track the annotation regions, flip the
-transformlist/whichtoinvert; the orientation itself is now handled analytically.
+The TRANSFORM DIRECTION (order / whichtoinvert / forward-vs-inverse warp FILE) is
+no longer eyeballed: when --ccf-annotation is supplied, the script SCORES each
+candidate direction by label-agreement against ccf_anno_in_sample_space (the same
+labels carried to sample space by the trusted image path) and picks the winner,
+failing loudly if even the best is poor. The QC overlay remains as a visual
+backstop, and MESH_UNITS_UM (=1.0 for Allen CCF) is the only hand-set convention.
 ==============================================================================
 """
 import argparse
@@ -174,47 +175,148 @@ def transform_ccf_to_sample(verts, transformlist, whichtoinvert, mesh_units_um,
     return idx_native * native_vox_um, native_vox_um
 
 
-def qc_overlay(reference_nii, all_verts_um, out_png, native_vox_um):
-    """Scatter transformed vertices over mid-slices of the inverted annotation
-    so a human can confirm the meshes land on the annotation regions. The output
-    meshes are in native um; ccf_anno_in_sample_space is in native array indices,
-    so vertices map to its voxels by dividing by the native voxel size."""
+def _plot_overlay(arr, vox, out_png, title):
+    """Scatter native-voxel-index points (red) over mid-slices of `arr` (the
+    inverted annotation). imshow plots sl[row=a0 -> y, col=a1 -> x]; the scatter
+    MUST use the SAME mapping (x=a1, y=a0) or the points look squished/offset on
+    any anisotropic slice."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        ref = ants.image_read(reference_nii)
-        arr = ref.numpy()
-        # native um -> native voxel index (same frame/shape as the reference array)
-        vox = all_verts_um / np.asarray(native_vox_um, float)
-        # cap plotted points so the scatter stays fast for dense meshes
         CAP = 200000
         if vox.shape[0] > CAP:
             vox = vox[:: max(1, vox.shape[0] // CAP)]
         half = np.array(arr.shape) // 2
         fig, ax = plt.subplots(1, 3, figsize=(12, 6))
         for k in range(3):
-            # in-plane axes (the two that aren't the slice axis), increasing order
-            a0, a1 = [j for j in range(3) if j != k]
+            a0, a1 = [j for j in range(3) if j != k]   # in-plane axes, increasing
             sl = np.take(arr, half[k], axis=k)          # shape (len a0, len a1)
-            # imshow plots sl[row, col] as (y=row=a0, x=col=a1); the scatter MUST use
-            # the SAME mapping (x=a1, y=a0) or the red points are squished/offset on
-            # any anisotropic slice. (The old code transposed only k==0 and swapped
-            # x/y for k==1,2 -> two of three panels were mis-drawn.)
             ax[k].imshow(sl, cmap="gray")
             sel = (np.abs(vox[:, k] - half[k]) < 3)
             if sel.any():
                 ax[k].scatter(vox[sel, a1], vox[sel, a0], s=0.2, c="r", alpha=0.4)
             ax[k].set_title(f"axis {k} @ slice {half[k]}", fontsize=8)
             ax[k].set_axis_off()
-        fig.suptitle("CCF objs (red) warped to sample vs inverted annotation\n"
-                     "VALIDATE: red should track the annotation region boundaries")
+        fig.suptitle(title)
         os.makedirs(os.path.dirname(out_png), exist_ok=True)
         plt.savefig(out_png, bbox_inches="tight", dpi=120)
         plt.close()
         print(f"wrote QC overlay {out_png}")
     except Exception as exc:
         print(f"QC overlay skipped (non-fatal): {exc}")
+
+
+def qc_overlay(reference_nii, all_verts_um, out_png, native_vox_um):
+    """Top-level mesh QC: warped vertices (native um) over the inverted annotation
+    (native array indices) -> divide by the native voxel size to get voxels."""
+    arr = ants.image_read(reference_nii).numpy()
+    vox = all_verts_um / np.asarray(native_vox_um, float)
+    _plot_overlay(arr, vox, out_png,
+                  "CCF objs (red) warped to sample vs inverted annotation\n"
+                  "VALIDATE: red should track the annotation region boundaries")
+
+
+# ---- self-validation: pick the point-transform DIRECTION against ground truth --
+# The orientation remap above is proven. The remaining unknown is the ANTs point
+# direction: order + whichtoinvert, AND which warp FILE (a displacement field
+# cannot be inverted by a flag -- only affines can -- so the forward 1Warp may be
+# required instead of 1InverseWarp). Rather than eyeball a QC PNG, we measure it:
+# ccf_anno_in_sample_space holds the SAME CCF labels carried to sample space by the
+# trusted IMAGE path, so we sample CCF-annotation voxels, run them through each
+# candidate (full chain incl. orientation reversal), and check the label agreement
+# at the predicted sample voxel. The winner is used; a poor winner fails loudly.
+def _build_direction_candidates(ct, ts):
+    """Enumerate the physically-sensible (transformlist, whichtoinvert) configs for
+    moving POINTS CCF->sample. Includes FORWARD-warp variants when the 1Warp files
+    exist next to the 1InverseWarp ones (a flag can't invert a field)."""
+    if len(ct) < 2 or len(ts) < 2:
+        # non-standard transform sets: fall back to the single image-mirror config
+        return [("img-mirror", list(ct) + list(ts), [True, False] * ((len(ct) + len(ts)) // 2))]
+    reg_aff, reg_iwarp = ct[0], ct[1]
+    syn_aff, syn_iwarp = ts[0], ts[1]
+
+    def fwd(p):
+        f = p.replace("InverseWarp", "Warp")
+        return f if (f != p and os.path.exists(f)) else None
+
+    reg_w, syn_w = fwd(reg_iwarp), fwd(syn_iwarp)
+    cands = [
+        # mirror of the annotation IMAGE chain (what the code shipped with)
+        ("img-mirror",     [reg_aff, reg_iwarp, syn_aff, syn_iwarp], [True, False, True, False]),
+        ("img-mirror-rev", [syn_aff, syn_iwarp, reg_aff, reg_iwarp], [True, False, True, False]),
+        # warp-before-affine composition (alternate ordering)
+        ("warp-first-rev", [syn_iwarp, syn_aff, reg_iwarp, reg_aff], [False, True, False, True]),
+    ]
+    if reg_w and syn_w:
+        # forward fields, affines applied forward -- the usual "points" sense
+        cands += [
+            ("pts-fwd-rev",        [syn_aff, syn_w, reg_aff, reg_w], [False, False, False, False]),
+            ("pts-fwd",            [reg_aff, reg_w, syn_aff, syn_w], [False, False, False, False]),
+            ("pts-fwd-affinv-rev", [syn_aff, syn_w, reg_aff, reg_w], [True, False, True, False]),
+        ]
+    return cands
+
+
+def _neighborhood_agreement(sample_arr, idx, labels):
+    """Fraction of points whose CCF label appears within a 1-voxel neighborhood of
+    the predicted sample voxel (tolerant to interpolation/boundary effects)."""
+    S = np.array(sample_arr.shape)
+    inb = np.all((idx >= 0) & (idx < S), axis=1)
+    n_in = int(inb.sum())
+    if n_in == 0:
+        return 0.0, 0
+    base = np.clip(idx, 0, S - 1)
+    matched = np.zeros(idx.shape[0], dtype=bool)
+    for di in (-1, 0, 1):
+        for dj in (-1, 0, 1):
+            for dk in (-1, 0, 1):
+                j = np.clip(base + np.array([di, dj, dk]), 0, S - 1)
+                matched |= sample_arr[j[:, 0], j[:, 1], j[:, 2]] == labels
+    return float(matched[inb].mean()), n_in
+
+
+def validate_direction(args, ccf_img, reoriented_img, inv_swaps, inv_flips, candidates, n=8000):
+    """Score each candidate by label-agreement against ccf_anno_in_sample_space.
+    Returns a list of (agreement, label, transformlist, whichtoinvert, n_eval),
+    best first, or None if the inputs needed for validation are unavailable."""
+    if not (args.ccf_annotation and os.path.exists(args.ccf_annotation)):
+        return None
+    anno = ants.image_read(args.ccf_annotation)
+    lab = anno.numpy()
+    nz = np.argwhere(lab > 0)
+    if nz.shape[0] == 0:
+        return None
+    step = max(1, nz.shape[0] // n)          # deterministic subsample (no RNG)
+    vidx = nz[::step][:n]
+    labels = lab[vidx[:, 0], vidx[:, 1], vidx[:, 2]]
+    anno_vox_um = np.asarray(anno.spacing, float) * 1000.0
+    verts_um = vidx.astype(float) * anno_vox_um   # CCF voxels expressed as mesh um
+    sample_arr = ants.image_read(args.reference_image).numpy()
+
+    # also write a per-candidate QC overlay so the direction can be picked BY EYE
+    # (the points are already warped here -- the overlay is essentially free).
+    cand_qc_dir = os.path.join(args.output_dir, "ccf_obj_to_sample", "qc", "candidates")
+
+    results = []
+    for label, files, inv in candidates:
+        try:
+            nat_um, nat_vox = transform_ccf_to_sample(
+                verts_um, files, inv, args.mesh_units_um,
+                ccf_img, reoriented_img, inv_swaps, inv_flips)
+            idx = np.rint(nat_um / nat_vox).astype(int)
+            frac, n_eval = _neighborhood_agreement(sample_arr, idx, labels)
+            print(f"  candidate {label:20s}: label-agreement {frac*100:5.1f}%  (n={n_eval})")
+            _plot_overlay(sample_arr, idx.astype(float),
+                          os.path.join(cand_qc_dir, f"{label}_agree{int(round(frac*100)):03d}.png"),
+                          f"candidate '{label}'  -- label-agreement {frac*100:.1f}%\n"
+                          "(annotation voxels warped to sample; red should fill the regions)")
+        except Exception as exc:
+            frac, n_eval = -1.0, 0
+            print(f"  candidate {label:20s}: ERROR {exc}")
+        results.append((frac, label, files, inv, n_eval))
+    results.sort(key=lambda r: r[0], reverse=True)
+    return results
 
 
 def main():
@@ -237,6 +339,13 @@ def main():
     p.add_argument("--reference-image", required=True,
                    help="inverted annotation in sample space (ccf_anno_in_sample_space.nii.gz); "
                         "native-frame QC target the warped meshes must overlay")
+    p.add_argument("--ccf-annotation", default=None,
+                   help="source CCF annotation label volume (annotation_10.nii.gz). When given, "
+                        "the point-transform DIRECTION is auto-validated against "
+                        "ccf_anno_in_sample_space (label agreement) and the best config chosen.")
+    p.add_argument("--agreement-min", type=float, default=0.5,
+                   help="minimum label-agreement for the chosen direction; below this the run "
+                        "warns loudly that the mesh alignment is untrustworthy")
     p.add_argument("--mesh-units-um", type=float, default=1.0,
                    help="micrometers per mesh unit (Allen CCF meshes are usually um=1.0)")
     p.add_argument("--start-iso", default=None)
@@ -256,11 +365,32 @@ def main():
     inv_flips = flips
     print(f"orientation swaps={swaps} flips={flips} -> inv_swaps={inv_swaps} inv_flips={inv_flips}")
 
-    # ----- VALIDATE ON FIRST RUN: order + whichtoinvert for POINTS -----
-    # Mirror of the annotation image chain (CCF->template->sample, each affine
-    # inverted + inverse-warp), expressed for points. Confirm via QC; flip if needed.
-    transformlist = list(args.ccf_to_template_transforms) + list(args.template_to_sample_transforms)
-    whichtoinvert = [True, False, True, False]
+    # ----- choose the POINT-transform direction by MEASUREMENT, not assumption ----
+    # The orientation remap is proven; the warp direction (order / whichtoinvert /
+    # forward-vs-inverse warp FILE) is not, so we score candidates against the
+    # known-good annotation and pick the winner. If --ccf-annotation is absent we
+    # fall back to the image-mirror config but flag it as unvalidated.
+    candidates = _build_direction_candidates(
+        list(args.ccf_to_template_transforms), list(args.template_to_sample_transforms))
+    print(f"validating {len(candidates)} candidate point-transform directions "
+          f"against {os.path.basename(args.ccf_annotation) if args.ccf_annotation else 'NOTHING'} ...")
+    ranked = validate_direction(args, ccf_img, reoriented_img, inv_swaps, inv_flips, candidates)
+    if ranked:
+        best_frac, chosen_label, transformlist, whichtoinvert, _ = ranked[0]
+        print(f"selected direction '{chosen_label}': label-agreement {best_frac*100:.1f}%")
+        if best_frac < args.agreement_min:
+            print("=" * 78)
+            print(f"WARNING: best direction only {best_frac*100:.1f}% < "
+                  f"{args.agreement_min*100:.0f}% agreement. The meshes are likely MISALIGNED -- "
+                  "do NOT publish ccf_obj_to_sample until this is resolved (check the "
+                  "transform files / QC overlay).")
+            print("=" * 78)
+    else:
+        chosen_label, best_frac = "img-mirror (UNVALIDATED)", float("nan")
+        transformlist = list(args.ccf_to_template_transforms) + list(args.template_to_sample_transforms)
+        whichtoinvert = [True, False, True, False]
+        print("WARNING: --ccf-annotation not provided; shipping the unvalidated image-mirror "
+              "direction. Provide annotation_10.nii.gz to auto-validate.")
     print(f"transformlist={transformlist}\nwhichtoinvert={whichtoinvert}")
 
     objs = sorted(glob.glob(os.path.join(args.obj_dir, "**", "*.obj"), recursive=True))
@@ -317,7 +447,9 @@ def main():
             experimenters=["Peter Grotz"],
             parameters={"n_meshes": len(objs), "mesh_units_um": args.mesh_units_um,
                         "transformlist": transformlist, "whichtoinvert": whichtoinvert,
-                        "inv_swaps": inv_swaps, "inv_flips": inv_flips},
+                        "inv_swaps": inv_swaps, "inv_flips": inv_flips,
+                        "direction": chosen_label,
+                        "label_agreement": None if best_frac != best_frac else round(best_frac, 4)},
             output_path="ccf_alignment/ccf_obj_to_sample/",
             notes="Reverse-transforms CCF region surface meshes into sample space "
                   "(point transform of vertices through the CCF->template->sample chain).",

@@ -34,8 +34,13 @@ REORIENTED_REFERENCE="/results/ccf_alignment/registration_metadata/${SUBJECTID}_
 # Acquisition metadata -> source of the swaps/flips check_orientation applied.
 ACQUISITION="/results/ccf_alignment/registration_metadata/acquisition_${SUBJECTID}.json"
 
-# Already-inverted annotation in sample space -> native-frame QC target.
+# Already-inverted annotation in sample space -> native-frame QC target AND the
+# ground truth the point-transform direction is validated against.
 REFERENCE_IMAGE="/results/ccf_alignment/ccf_anno_to_sample/ccf_anno_in_sample_space.nii.gz"
+
+# Source CCF annotation (same volume the annotation inversion used) -> lets the
+# script auto-validate the transform direction by label agreement.
+CCF_ANNOTATION="../data/allen_mouse_ccf/annotation/ccf_2017/annotation_10.nii.gz"
 
 OUTPUT_DIR="/results/ccf_alignment"
 
@@ -58,6 +63,7 @@ python invert_ccf_objs.py \
     --reoriented-reference "$REORIENTED_REFERENCE" \
     --acquisition "$ACQUISITION" \
     --reference-image "$REFERENCE_IMAGE" \
+    --ccf-annotation "$CCF_ANNOTATION" \
     --mesh-units-um 1.0
 
 echo "CCF obj inversion completed!"
