@@ -194,12 +194,18 @@ def qc_overlay(reference_nii, all_verts_um, out_png, native_vox_um):
         half = np.array(arr.shape) // 2
         fig, ax = plt.subplots(1, 3, figsize=(12, 6))
         for k in range(3):
-            sl = np.take(arr, half[k], axis=k)
-            ax[k].imshow(sl.T if k == 0 else sl, cmap="gray")
-            a = [j for j in range(3) if j != k]
+            # in-plane axes (the two that aren't the slice axis), increasing order
+            a0, a1 = [j for j in range(3) if j != k]
+            sl = np.take(arr, half[k], axis=k)          # shape (len a0, len a1)
+            # imshow plots sl[row, col] as (y=row=a0, x=col=a1); the scatter MUST use
+            # the SAME mapping (x=a1, y=a0) or the red points are squished/offset on
+            # any anisotropic slice. (The old code transposed only k==0 and swapped
+            # x/y for k==1,2 -> two of three panels were mis-drawn.)
+            ax[k].imshow(sl, cmap="gray")
             sel = (np.abs(vox[:, k] - half[k]) < 3)
             if sel.any():
-                ax[k].scatter(vox[sel, a[0]], vox[sel, a[1]], s=0.2, c="r", alpha=0.4)
+                ax[k].scatter(vox[sel, a1], vox[sel, a0], s=0.2, c="r", alpha=0.4)
+            ax[k].set_title(f"axis {k} @ slice {half[k]}", fontsize=8)
             ax[k].set_axis_off()
         fig.suptitle("CCF objs (red) warped to sample vs inverted annotation\n"
                      "VALIDATE: red should track the annotation region boundaries")
