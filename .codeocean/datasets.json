@@ -2,6 +2,10 @@
 	"version": 1,
 	"attached_datasets": [
 		{
+			"id": "0fadf46e-9cae-4618-9f8a-6e086af808fb",
+			"mount": "ccf_2017_obj"
+		},
+		{
 			"id": "26b6c381-1a63-460b-bf46-304ca2b6e62f",
 			"mount": "reg_721332_to_ccf_25um_v1.3"
 		},
