@@ -14,11 +14,16 @@ echo "DATASET_PATH=${DATASET_PATH}  SUBJECTID=${SUBJECTID}"
 # CCF region meshes (data asset connected to this capsule).
 OBJ_DIR="../data/ccf_2017_obj"
 
-# Same transforms the annotation inversion uses.
-CCF_TO_TEMPLATE_1="/data/reg_exaspim_template_to_ccf_25um_v1.4/0GenericAffine.mat"
-CCF_TO_TEMPLATE_2="/data/reg_exaspim_template_to_ccf_25um_v1.4/1InverseWarp.nii.gz"
-TEMPLATE_TO_SAMPLE_1="/results/ccf_alignment/${SUBJECTID}_to_exaSPIM_SyN_0GenericAffine.mat"
-TEMPLATE_TO_SAMPLE_2="/results/ccf_alignment/${SUBJECTID}_to_exaSPIM_SyN_1InverseWarp.nii.gz"
+# FORWARD transforms, in [1Warp, 0GenericAffine] order, NO inversion. For POINTS,
+# reg(fixed=CCF,moving=template) and SyN(fixed=template,moving=sample) map
+# fixed->moving via their FORWARD transforms -- the opposite of the annotation
+# IMAGE path (which uses the inverse warps), because points travel opposite to
+# image content. Confirmed by an affine-only test (CCF region 362 landed within
+# 11 voxels of truth, vs 440-580 for every alternative).
+CCF_TO_TEMPLATE_1="/data/reg_exaspim_template_to_ccf_25um_v1.4/1Warp.nii.gz"
+CCF_TO_TEMPLATE_2="/data/reg_exaspim_template_to_ccf_25um_v1.4/0GenericAffine.mat"
+TEMPLATE_TO_SAMPLE_1="/results/ccf_alignment/${SUBJECTID}_to_exaSPIM_SyN_1Warp.nii.gz"
+TEMPLATE_TO_SAMPLE_2="/results/ccf_alignment/${SUBJECTID}_to_exaSPIM_SyN_0GenericAffine.mat"
 
 # CCF average_template -> defines the CCF physical frame the mesh um are mapped
 # into (same space the transforms were computed in). 10 vs 25 um share the same

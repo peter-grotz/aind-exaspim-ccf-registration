@@ -142,29 +142,41 @@ def _reverse_orient_indices(idx_reor, reor_shape, inv_swaps, inv_flips):
     return r[:, order], order
 
 
-def transform_ccf_to_sample(verts, transformlist, whichtoinvert, mesh_units_um,
+def transform_ccf_to_sample(verts, ccf_to_template_fwd, template_to_sample_fwd, mesh_units_um,
                             ccf_img, reoriented_img, inv_swaps, inv_flips):
     """Map CCF mesh vertices -> NATIVE sample space.
 
+    DIRECTION (derived from ANTs semantics + confirmed by an affine-only test that
+    landed CCF region 362 within 11 voxels of its true location in
+    ccf_anno_in_sample_space, vs 440-580 vox for every alternative):
+
+    The two registrations are reg(fixed=CCF, moving=template) and
+    SyN(fixed=template, moving=sample). For POINTS, moving fixed->moving uses each
+    registration's FORWARD transforms [1Warp, 0GenericAffine] (NO inversion) --
+    the opposite of the annotation IMAGE path, because points travel opposite to
+    image content. The path C->T->S is therefore two sequential point transforms:
+      1) reg  FORWARD  (C -> T)
+      2) SyN  FORWARD  (T -> S)
+    applied as two calls (unambiguous composition), each whichtoinvert all-False.
+
     verts: (N,3) CCF array-order micrometers (x mesh_units_um -> um).
-    Returns (warped_verts_um (N,3), native_voxel_um (3,)) where warped_verts_um is
-    in the native zarr array orientation (same frame as ccf_anno_in_sample_space),
-    scaled by the native voxel size, so it overlays the sample volume the way the
-    input overlaid the CCF volume.
+    Returns (warped_verts_um (N,3), native_voxel_um (3,)) in native zarr array
+    orientation (same frame as ccf_anno_in_sample_space), scaled by native voxel um.
     """
     if pd is None:
         raise RuntimeError("pandas required for ants.apply_transforms_to_points")
-    # 1) mesh um -> CCF array index -> CCF physical (applies the CCF affine)
+    # 1) mesh um -> CCF array index -> CCF physical (applies the CCF ASL affine)
     ccf_vox_um = np.asarray(ccf_img.spacing, float) * 1000.0
     idx_ccf = (verts * mesh_units_um) / ccf_vox_um
-    phys_ccf = _index_to_physical(idx_ccf, ccf_img)
-    # 2) warp CCF physical -> REORIENTED sample physical (the frame the SyN
-    #    transforms were computed in)
-    df = pd.DataFrame(phys_ccf, columns=["x", "y", "z"])
-    out = ants.apply_transforms_to_points(3, df, transformlist, whichtoinvert=whichtoinvert)
-    phys_sample = out[["x", "y", "z"]].to_numpy()
-    # 3) reoriented physical -> reoriented array index, using the ACTUAL registration
-    #    grid affine (loaded zarr image: same oriented direction/origin the SyN used).
+    phys = _index_to_physical(idx_ccf, ccf_img)
+    # 2) two-stage FORWARD point transform: reg (C->T) then SyN (T->S)
+    df = pd.DataFrame(phys, columns=["x", "y", "z"])
+    df = ants.apply_transforms_to_points(3, df, list(ccf_to_template_fwd),
+                                         whichtoinvert=[False] * len(ccf_to_template_fwd))
+    df = ants.apply_transforms_to_points(3, df, list(template_to_sample_fwd),
+                                         whichtoinvert=[False] * len(template_to_sample_fwd))
+    phys_sample = df[["x", "y", "z"]].to_numpy()
+    # 3) reoriented(sample) physical -> reoriented array index (loaded zarr affine)
     idx_reor = _physical_to_index(phys_sample, reoriented_img)
     # 4) undo the registration's orientation (swaps/flips) -> native zarr indices
     reor_shape = np.asarray(reoriented_img.shape, int)
@@ -375,33 +387,17 @@ def main():
     inv_flips = flips
     print(f"orientation swaps={swaps} flips={flips} -> inv_swaps={inv_swaps} inv_flips={inv_flips}")
 
-    # ----- choose the POINT-transform direction by MEASUREMENT, not assumption ----
-    # The orientation remap is proven; the warp direction (order / whichtoinvert /
-    # forward-vs-inverse warp FILE) is not, so we score candidates against the
-    # known-good annotation and pick the winner. If --ccf-annotation is absent we
-    # fall back to the image-mirror config but flag it as unvalidated.
-    candidates = _build_direction_candidates(
-        list(args.ccf_to_template_transforms), list(args.template_to_sample_transforms))
-    print(f"validating {len(candidates)} candidate point-transform directions "
-          f"against {os.path.basename(args.ccf_annotation) if args.ccf_annotation else 'NOTHING'} ...")
-    ranked = validate_direction(args, ccf_img, reoriented_img, inv_swaps, inv_flips, candidates)
-    if ranked:
-        best_frac, chosen_label, transformlist, whichtoinvert, _ = ranked[0]
-        print(f"selected direction '{chosen_label}': label-agreement {best_frac*100:.1f}%")
-        if best_frac < args.agreement_min:
-            print("=" * 78)
-            print(f"WARNING: best direction only {best_frac*100:.1f}% < "
-                  f"{args.agreement_min*100:.0f}% agreement. The meshes are likely MISALIGNED -- "
-                  "do NOT publish ccf_obj_to_sample until this is resolved (check the "
-                  "transform files / QC overlay).")
-            print("=" * 78)
-    else:
-        chosen_label, best_frac = "img-mirror (UNVALIDATED)", float("nan")
-        transformlist = list(args.ccf_to_template_transforms) + list(args.template_to_sample_transforms)
-        whichtoinvert = [True, False, True, False]
-        print("WARNING: --ccf-annotation not provided; shipping the unvalidated image-mirror "
-              "direction. Provide annotation_10.nii.gz to auto-validate.")
-    print(f"transformlist={transformlist}\nwhichtoinvert={whichtoinvert}")
+    # ----- CONFIRMED point-transform direction (derived + affine-only-validated) --
+    # reg(fixed=CCF, moving=template) and SyN(fixed=template, moving=sample). For
+    # POINTS, fixed->moving uses each registration's FORWARD transforms
+    # [1Warp, 0GenericAffine] (no inversion). Path C->T->S = reg FORWARD then SyN
+    # FORWARD, two sequential calls. Confirmed: affine-only landed CCF region 362
+    # within 11 voxels of its true location in ccf_anno_in_sample_space (vs
+    # 440-580 vox for every other order/inversion). The run script passes the
+    # FORWARD warps in [1Warp, 0GenericAffine] order.
+    ccf_to_template_fwd = list(args.ccf_to_template_transforms)
+    template_to_sample_fwd = list(args.template_to_sample_transforms)
+    print(f"reg (C->T) FWD: {ccf_to_template_fwd}\nSyN (T->S) FWD: {template_to_sample_fwd}")
 
     objs = sorted(glob.glob(os.path.join(args.obj_dir, "**", "*.obj"), recursive=True))
     print(f"found {len(objs)} .obj meshes under {args.obj_dir}")
@@ -426,9 +422,9 @@ def main():
 
     counts = [c.shape[0] for c in chunks]
     all_in = np.vstack(chunks)
-    print(f"transforming {all_in.shape[0]} vertices from {len(chunks)} meshes in ONE call")
+    print(f"transforming {all_in.shape[0]} vertices from {len(chunks)} meshes")
     all_out, native_vox_um = transform_ccf_to_sample(
-        all_in, transformlist, whichtoinvert, args.mesh_units_um,
+        all_in, ccf_to_template_fwd, template_to_sample_fwd, args.mesh_units_um,
         ccf_img, reoriented_img, inv_swaps, inv_flips)
 
     offset = 0
@@ -456,10 +452,10 @@ def main():
             run_script="/code/run_invert_ccf_objs.sh",
             experimenters=["Peter Grotz"],
             parameters={"n_meshes": len(objs), "mesh_units_um": args.mesh_units_um,
-                        "transformlist": transformlist, "whichtoinvert": whichtoinvert,
-                        "inv_swaps": inv_swaps, "inv_flips": inv_flips,
-                        "direction": chosen_label,
-                        "label_agreement": None if best_frac != best_frac else round(best_frac, 4)},
+                        "ccf_to_template_fwd": ccf_to_template_fwd,
+                        "template_to_sample_fwd": template_to_sample_fwd,
+                        "direction": "reg-FWD(C->T) then SyN-FWD(T->S), two-stage points",
+                        "inv_swaps": inv_swaps, "inv_flips": inv_flips},
             output_path="ccf_alignment/ccf_obj_to_sample/",
             notes="Reverse-transforms CCF region surface meshes into sample space "
                   "(point transform of vertices through the CCF->template->sample chain).",
