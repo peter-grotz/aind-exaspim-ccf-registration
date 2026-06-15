@@ -162,8 +162,10 @@ def transform_ccf_to_sample(verts, ccf_to_template_fwd, template_to_sample_fwd, 
     applied as two calls (unambiguous composition), each whichtoinvert all-False.
 
     verts: (N,3) CCF array-order micrometers (x mesh_units_um -> um).
-    Returns (warped_verts_um (N,3), native_voxel_um (3,)) in native zarr array
-    orientation (same frame as ccf_anno_in_sample_space), scaled by native voxel um.
+    Returns (warped_verts_um (N,3), native_voxel_um (3,), native_shape (3,)) in
+    native zarr array orientation (same frame as ccf_anno_in_sample_space), scaled
+    by native voxel um. native_shape is the native (z,y,x) grid size -- used to
+    auto-detect the fused pyramid level for the physical-micron (Horta) export.
     """
     if pd is None:
         raise RuntimeError("pandas required for ants.apply_transforms_to_points")
@@ -186,7 +188,8 @@ def transform_ccf_to_sample(verts, ccf_to_template_fwd, template_to_sample_fwd, 
     # 5) native index -> native um (voxel size permutes the same way as the axes)
     reor_vox_um = np.asarray(reoriented_img.spacing, float) * 1000.0
     native_vox_um = reor_vox_um[order]
-    return idx_native * native_vox_um, native_vox_um
+    native_shape = np.asarray(reoriented_img.shape, int)[order]   # native (z,y,x) grid
+    return idx_native * native_vox_um, native_vox_um, native_shape
 
 
 def _plot_overlay(arr, vox, out_png, title):
@@ -231,6 +234,71 @@ def qc_overlay(reference_nii, all_verts_um, out_png, native_vox_um):
                   "VALIDATE: red should track the annotation region boundaries")
 
 
+# ---- Horta-ready export: warped meshes in the fused image's TRUE physical um ----
+# The native step above stores native_um = voxel_index * NOMINAL spacing (the
+# [10.125,13.5,10.125] the registration set_spacing'd onto the loaded grid). That
+# nominal value is NOT the fused image's real resolution: the registration input
+# (fused_ccf_ch.zarr) is a pre-downsampled pyramid, so the loaded grid is physically
+# fused.zarr level 5 (~23.936 um xy), not 10 um. A viewer like HortaCloud places the
+# fused volume by its OWN OME-Zarr scale, so to land the mesh on the image we recover
+# the integer voxel INDEX (divide out the nominal spacing) and re-express it in the
+# fused image's true micrometers: physical = index * level_scale + level_translation,
+# then reorder columns (z,y,x)->(x,y,z) since Horta reads .obj columns as (x,y,z).
+# The pyramid level is AUTO-DETECTED by matching the native grid shape (not hardcoded),
+# so this stays correct if a run registers at a different level.
+def _fused_levels(fused_zarr_path):
+    """Read an OME-Zarr group's multiscales[0] -> list of
+    (level_path, shape_zyx, scale_zyx, translation_zyx). Used to map native voxel
+    indices into the fused image's true physical micrometers."""
+    import zarr
+    g = zarr.open(fused_zarr_path, mode="r")
+    ms = g.attrs["multiscales"][0]
+    axes = [a["name"] for a in ms["axes"]]
+    zyx = [axes.index(k) for k in ("z", "y", "x")]
+    levels = []
+    for ds in ms["datasets"]:
+        cts = ds["coordinateTransformations"]
+        scale = next(t["scale"] for t in cts if t["type"] == "scale")
+        trans = next((t["translation"] for t in cts if t["type"] == "translation"),
+                     [0.0] * len(scale))
+        shp = g[ds["path"]].shape
+        levels.append((ds["path"],
+                       tuple(int(shp[i]) for i in zyx),
+                       tuple(float(scale[i]) for i in zyx),
+                       tuple(float(trans[i]) for i in zyx)))
+    return levels
+
+
+def to_fused_microns(verts_native_um, native_vox_um, native_shape, fused_levels):
+    """native (z,y,x) um -> fused-image physical um in Horta (x,y,z) order.
+    Picks the fused pyramid level whose (z,y,x) grid matches the native grid, then
+    physical_um = (native_um / nominal_voxel) * level_scale + level_translation.
+    Returns (horta_xyz (N,3), chosen_level tuple)."""
+    target = np.asarray(native_shape, float)
+    lvl = min(fused_levels, key=lambda L: float(np.abs(np.asarray(L[1]) - target).sum()))
+    _, _, scale, trans = lvl
+    idx = np.asarray(verts_native_um, float) / np.asarray(native_vox_um, float)   # -> voxel index
+    phys = idx * np.asarray(scale, float) + np.asarray(trans, float)              # (z,y,x) um
+    return phys[:, [2, 1, 0]], lvl                                                # -> (x,y,z)
+
+
+def write_obj_xyz(path, lines, vert_idx, new_xyz):
+    """Write an .obj with vertices replaced by new_xyz and any vertex-normal (vn)
+    components reordered (z,y,x)->(x,y,z) to match the column reorder. Faces are kept
+    verbatim -- the validated Horta export reorders columns only, it does not reverse
+    winding (HortaCloud renders the imported surface fine without it)."""
+    lines = list(lines)
+    for row, i in enumerate(vert_idx):
+        x, y, z = new_xyz[row]
+        lines[i] = f"v {x:.6f} {y:.6f} {z:.6f}"
+    for i, ln in enumerate(lines):
+        if ln.startswith("vn "):
+            q = ln.split()
+            lines[i] = f"vn {q[3]} {q[2]} {q[1]}"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w").write("\n".join(lines) + "\n")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--obj-dir", required=True, help="folder of CCF .obj meshes (ccf_2017_obj)")
@@ -253,6 +321,11 @@ def main():
                         "native-frame QC target the warped meshes overlay")
     p.add_argument("--mesh-units-um", type=float, default=1.0,
                    help="micrometers per mesh unit (Allen CCF meshes are usually um=1.0)")
+    p.add_argument("--fused-zarr", default=None,
+                   help="OME-Zarr the meshes should be expressed against for viewers "
+                        "(the fused.zarr HortaCloud loads). If given, also writes a "
+                        "physical-micron, (x,y,z)-ordered copy to ccf_obj_to_sample_micron/ "
+                        "(RESULTS-ONLY -- not whitelisted for S3). Non-fatal if unreadable.")
     p.add_argument("--start-iso", default=None)
     args = p.parse_args()
 
@@ -305,7 +378,7 @@ def main():
     counts = [c.shape[0] for c in chunks]
     all_in = np.vstack(chunks)
     print(f"transforming {all_in.shape[0]} vertices from {len(chunks)} meshes")
-    all_out, native_vox_um = transform_ccf_to_sample(
+    all_out, native_vox_um, native_shape = transform_ccf_to_sample(
         all_in, ccf_to_template_fwd, template_to_sample_fwd, args.mesh_units_um,
         ccf_img, reoriented_img, inv_swaps, inv_flips)
 
@@ -314,6 +387,26 @@ def main():
         write_obj(os.path.join(out_root, rel), lines, vidx, all_out[offset:offset + n])
         offset += n
     print(f"wrote {len(meshes)} warped meshes to {out_root}")
+
+    # ---- Horta-ready copies in the fused image's TRUE physical micrometers --------
+    # RESULTS-ONLY: ccf_obj_to_sample_micron/ is NOT in the upload capsule's
+    # PUBLISH_WHITELIST, so it stays in /results and is never pushed to S3. Skips
+    # silently (non-fatal) if --fused-zarr is absent or its metadata can't be read.
+    if args.fused_zarr:
+        try:
+            levels = _fused_levels(args.fused_zarr)
+            horta, lvl = to_fused_microns(all_out, native_vox_um, native_shape, levels)
+            out_micron = os.path.join(args.output_dir, "ccf_obj_to_sample_micron")
+            os.makedirs(out_micron, exist_ok=True)
+            offset = 0
+            for (rel, lines, vidx), n in zip(meshes, counts):
+                write_obj_xyz(os.path.join(out_micron, rel), lines, vidx, horta[offset:offset + n])
+                offset += n
+            print(f"wrote {len(meshes)} Horta-micron meshes to {out_micron} "
+                  f"(native grid {tuple(int(s) for s in native_shape)} -> fused level "
+                  f"'{lvl[0]}' shape{lvl[1]} scale{lvl[2]} trans{lvl[3]} um; NOT uploaded to S3)")
+        except Exception as exc:
+            print(f"Horta-micron export skipped (non-fatal): {exc}")
 
     # all_out is in native um; ccf_anno_in_sample_space is in native array indices,
     # so QC divides by the native voxel size to land vertices on the right voxels.

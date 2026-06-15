@@ -9,7 +9,12 @@ DATA_FOLDER="../data/"
 processing_manifest_file=$(find "$DATA_FOLDER" -maxdepth 1 -name "exaspim_manifest*.json" | head -n 1)
 DATASET_PATH=$(awk -F'"' '/"zarr_multiscale"/{b=1} b&&/"input_uri"/{print $4;exit} b&&/}/{b=0}' "$processing_manifest_file")
 SUBJECTID=$(echo "${DATASET_PATH}" | grep -oP 'exaSPIM_\K[0-9]+')
-echo "DATASET_PATH=${DATASET_PATH}  SUBJECTID=${SUBJECTID}"
+# Viewer target for the physical-micron (Horta) export: HortaCloud loads the signal
+# fused.zarr, while registration reads its sibling fused_ccf_ch.zarr. They share the
+# voxel grid; we express the micron meshes against fused.zarr so scale AND origin
+# match exactly what Horta uses. Falls back to DATASET_PATH if the name doesn't match.
+FUSED_ZARR="${DATASET_PATH/fused_ccf_ch.zarr/fused.zarr}"
+echo "DATASET_PATH=${DATASET_PATH}  SUBJECTID=${SUBJECTID}  FUSED_ZARR=${FUSED_ZARR}"
 
 # CCF region meshes (data asset connected to this capsule).
 OBJ_DIR="../data/ccf_2017_obj"
@@ -64,6 +69,7 @@ python invert_ccf_objs.py \
     --reoriented-reference "$REORIENTED_REFERENCE" \
     --acquisition "$ACQUISITION" \
     --reference-image "$REFERENCE_IMAGE" \
+    --fused-zarr "$FUSED_ZARR" \
     --mesh-units-um 1.0
 
 echo "CCF obj inversion completed!"

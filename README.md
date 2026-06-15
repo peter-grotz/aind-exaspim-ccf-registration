@@ -51,6 +51,10 @@ cd code && ./run
 - `ccf_mesh_to_sample/` — CCF region meshes warped into sample space (**published
   to S3** under `ccf_alignment/ccf_mesh_to_sample/` by the upload capsule),
   `+ ccf_mesh_to_sample/qc/ccf_mesh_vs_annotation.png` (QC overlay)
+- `ccf_obj_to_sample_micron/` — the same warped meshes re-expressed in the fused
+  image's **true physical micrometers**, `(x, y, z)` column order, ready to import
+  into viewers such as **HortaCloud**. **Results-only — NOT uploaded to S3** (it is
+  intentionally absent from the upload capsule's `PUBLISH_WHITELIST`).
 
 ## CCF region meshes → sample space (step 4)
 
@@ -78,8 +82,17 @@ check. The warped meshes are **published to S3** at
 the step's `DataProcess` record (`name="CCF meshes to sample space"`) is
 aggregated into `processing.json`.
 
-> Coordinate note for downstream viewers (e.g. HortaCloud): the warped `.obj`
-> vertices are in the registration's native frame — numpy/OME-Zarr **(z, y, x)**
-> array order, scaled by the sample's nominal voxel size. Viewers that read `.obj`
-> columns as physical **(x, y, z)** need the axes reversed (and a rescale/offset to
-> the fused image's physical microns) to land in the volume.
+> Coordinate note for downstream viewers. The `ccf_mesh_to_sample/` `.obj` vertices
+> are in the registration's native frame — numpy/OME-Zarr **(z, y, x)** array order,
+> scaled by the sample's *nominal* voxel size — which overlays
+> `ccf_anno_in_sample_space` directly. Viewers that read `.obj` columns as physical
+> **(x, y, z)** (e.g. **HortaCloud**) need a different convention, so the step also
+> emits **`ccf_obj_to_sample_micron/`** (results-only): the same meshes recovered to
+> their integer voxel index and re-expressed in the fused image's **true physical
+> micrometers** via the matching `fused.zarr` pyramid level
+> (`index × level_scale + level_translation`), with columns reordered to `(x, y, z)`.
+> The level is auto-detected from the native grid shape, so it stays correct if a
+> run registers at a different level. Note the registration input
+> `fused_ccf_ch.zarr` is pre-downsampled (its level 0 = `fused.zarr` level 3), so the
+> loaded 10 µm grid is physically `fused.zarr` **level 5** (~23.936 µm xy), not 10 µm —
+> hence the rescale from the nominal `[10.125, 13.5, 10.125]` to the true level scale.
