@@ -30,14 +30,15 @@ cd code && ./run
   inversion (step 4). Optional: if absent, that step skips.
 
 ## Parameters / environment variables
-- **`USE_FUSED_MASK`** (App-Panel parameter, default **on**) — whether to restrict
-  registration with the fused flat-field brain mask (`fused_mask_ch.zarr`). The
-  capsule's **first** App-Panel parameter is passed to `run` as `$1`, which sets
-  this env var; accepts `yes/no`, `true/false`, `1/0`, `on/off`. Anything that
-  isn't an explicit no/false/0/off keeps the mask ON. With it off, registration
-  runs unmasked (no fused mask is loaded or written). Standalone:
-  `./run no` (mask off) or `./run` / `./run yes` (mask on). The choice is recorded
-  in the `Image atlas alignment - 25 um` `DataProcess` (`parameters.use_fused_mask`).
+- **`USE_FUSED_MASK`** (App-Panel parameter, default **`true`**) — whether to
+  restrict registration with the fused flat-field brain mask (`fused_mask_ch.zarr`).
+  The capsule's **first** App-Panel parameter is passed to `run` as `$1`, which
+  sets this env var; accepts **`true`/`false`** (also `yes/no`, `1/0`, `on/off`).
+  Anything that isn't an explicit `false`/`no`/`0`/`off` keeps the mask ON. With it
+  off, registration runs unmasked (no fused mask is loaded or written). Standalone:
+  `./run false` (mask off) or `./run` / `./run true` (mask on). The choice is
+  recorded in the `Image atlas alignment - 25 um` `DataProcess`
+  (`parameters.use_fused_mask`).
 - `OUTPUT_PREFIX` — if set, the fused image + mask are read from
   `<OUTPUT_PREFIX>/<asset>/fusion/` (a scratch test dir) instead of the input
   asset; acquisition metadata is still read from the input asset.

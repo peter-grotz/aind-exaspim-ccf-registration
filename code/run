@@ -4,8 +4,8 @@ set -ex
 # This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
 
 # App-Panel parameter: use the fused CCF brain mask to restrict registration?
-# Code Ocean passes the capsule's first parameter as $1 (default on). Accepts
-# yes/no, true/false, 1/0, on/off. A pre-set USE_FUSED_MASK env wins if present.
+# Code Ocean passes the capsule's first parameter as $1 (default true). Accepts
+# true/false (also yes/no, 1/0, on/off). A pre-set USE_FUSED_MASK env wins.
 export USE_FUSED_MASK="${USE_FUSED_MASK:-${1:-true}}"
 echo "USE_FUSED_MASK=${USE_FUSED_MASK}"
 
