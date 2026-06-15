@@ -33,7 +33,7 @@ against adjust_array_reverse). --reoriented-reference supplies the registration
 grid affine; --acquisition supplies the swaps/flips to invert.
 
 MESH_UNITS_UM (=1.0 for Allen CCF) is the only hand-set convention. The QC overlay
-(ccf_obj_to_sample/qc/ccf_objs_vs_annotation.png) is the per-run visual check.
+(ccf_mesh_to_sample/qc/ccf_mesh_vs_annotation.png) is the per-run visual check.
 """
 import argparse
 import glob
@@ -284,7 +284,7 @@ def main():
 
     objs = sorted(glob.glob(os.path.join(args.obj_dir, "**", "*.obj"), recursive=True))
     print(f"found {len(objs)} .obj meshes under {args.obj_dir}")
-    out_root = os.path.join(args.output_dir, "ccf_obj_to_sample")
+    out_root = os.path.join(args.output_dir, "ccf_mesh_to_sample")
     os.makedirs(out_root, exist_ok=True)
 
     # Read every mesh once and concatenate ALL vertices, so the two
@@ -318,14 +318,14 @@ def main():
     # all_out is in native um; ccf_anno_in_sample_space is in native array indices,
     # so QC divides by the native voxel size to land vertices on the right voxels.
     qc_overlay(args.reference_image, all_out,
-               os.path.join(out_root, "qc", "ccf_objs_vs_annotation.png"), native_vox_um)
+               os.path.join(out_root, "qc", "ccf_mesh_vs_annotation.png"), native_vox_um)
 
     # metadata record (stdlib helper, vendored in this capsule)
     try:
         from aind_process_record import make_data_process, write_data_process
         dp = make_data_process(
             process_type="Image atlas alignment",
-            name="CCF objects to sample space",
+            name="CCF meshes to sample space",
             start=start,
             end=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             code_url="https://github.com/AllenNeuralDynamics/aind-exaspim-ccf-registration.git",
@@ -338,7 +338,7 @@ def main():
                         "template_to_sample_fwd": template_to_sample_fwd,
                         "direction": "reg-FWD(C->T) then SyN-FWD(T->S), two-stage points",
                         "inv_swaps": inv_swaps, "inv_flips": inv_flips},
-            output_path="ccf_alignment/ccf_obj_to_sample/",
+            output_path="ccf_alignment/ccf_mesh_to_sample/",
             notes="Reverse-transforms CCF region surface meshes into sample space "
                   "(point transform of vertices through the CCF->template->sample chain).",
         )

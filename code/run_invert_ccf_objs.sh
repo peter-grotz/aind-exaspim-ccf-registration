@@ -40,7 +40,7 @@ REORIENTED_REFERENCE="/results/ccf_alignment/registration_metadata/${SUBJECTID}_
 ACQUISITION="/results/ccf_alignment/registration_metadata/acquisition_${SUBJECTID}.json"
 
 # Already-inverted annotation in sample space -> native-frame QC target the
-# warped meshes overlay (ccf_obj_to_sample/qc/ccf_objs_vs_annotation.png).
+# warped meshes overlay (ccf_mesh_to_sample/qc/ccf_mesh_vs_annotation.png).
 REFERENCE_IMAGE="/results/ccf_alignment/ccf_anno_to_sample/ccf_anno_in_sample_space.nii.gz"
 
 OUTPUT_DIR="/results/ccf_alignment"

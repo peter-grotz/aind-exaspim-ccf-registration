@@ -48,8 +48,9 @@ cd code && ./run
 - `ccf_aligned.zarr/`, `ccf_anno_to_sample/{ccf_anno_in_sample_space.nii.gz,.zarr}`
 - `*_data_process.json` (per step) + `registration_metadata/{id}_fused_mask.nii.gz`
 - `mask_qc/{id}_fused_mask_vs_template_mask.png` — QC overlay (results-only)
-- `ccf_obj_to_sample/` — CCF region meshes warped into sample space (results-only),
-  `+ ccf_obj_to_sample/qc/ccf_objs_vs_annotation.png` (QC overlay)
+- `ccf_mesh_to_sample/` — CCF region meshes warped into sample space (**published
+  to S3** under `ccf_alignment/ccf_mesh_to_sample/` by the upload capsule),
+  `+ ccf_mesh_to_sample/qc/ccf_mesh_vs_annotation.png` (QC overlay)
 
 ## CCF region meshes → sample space (step 4)
 
@@ -70,8 +71,15 @@ forward point transforms: reg (C→T) then SyN (T→S). Verified by an affine-on
 test (CCF region 362 → within 11 voxels of truth, vs 440–580 for every
 alternative) and by overlaying the warped mesh on the actual specimen brain.
 
-The step writes a QC overlay — `ccf_obj_to_sample/qc/ccf_objs_vs_annotation.png`
+The step writes a QC overlay — `ccf_mesh_to_sample/qc/ccf_mesh_vs_annotation.png`
 (warped vertices in red over `ccf_anno_in_sample_space`) — as the per-run visual
-check. The warped meshes are **results-only** (not in the upload publish
-whitelist) by default; the step's `DataProcess` record
-(`name="CCF objects to sample space"`) is aggregated into `processing.json`.
+check. The warped meshes are **published to S3** at
+`ccf_alignment/ccf_mesh_to_sample/` (the upload capsule whitelists this folder);
+the step's `DataProcess` record (`name="CCF meshes to sample space"`) is
+aggregated into `processing.json`.
+
+> Coordinate note for downstream viewers (e.g. HortaCloud): the warped `.obj`
+> vertices are in the registration's native frame — numpy/OME-Zarr **(z, y, x)**
+> array order, scaled by the sample's nominal voxel size. Viewers that read `.obj`
+> columns as physical **(x, y, z)** need the axes reversed (and a rescale/offset to
+> the fused image's physical microns) to land in the volume.
