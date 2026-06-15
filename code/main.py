@@ -259,6 +259,8 @@ def main() -> None:
                 "level": level,
                 "resolution_um": resolution,
                 "dataset_id": dataset_id,
+                "use_fused_mask": os.environ.get("USE_FUSED_MASK", "true").strip().lower()
+                                  not in ("0", "false", "no", "off", "none", "skip", "n", "f", ""),
                 "sample_to_template_registration": example_input["reg_param_25um"],
                 "template_to_ccf_transforms": exaspim_to_ccf_transform_path,
             },

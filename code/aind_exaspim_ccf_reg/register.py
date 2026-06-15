@@ -49,6 +49,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def _fused_mask_enabled() -> bool:
+    """Whether to restrict registration with the fused flat-field brain mask.
+    Driven by the USE_FUSED_MASK env var (set by the App-Panel parameter via the
+    run script). Default ON; only explicit no/false/0/off/none/skip disables it."""
+    v = os.environ.get("USE_FUSED_MASK", "true").strip().lower()
+    return v not in ("0", "false", "no", "off", "none", "skip", "n", "f", "")
+
+
 class TemplateLoader:
     """Loading CCF and exaSPIM templates."""
     
@@ -187,24 +195,31 @@ class ImagePreprocessor:
             f"Intensity normalization completed, execution time: {end_time - start_time} s -- image {ants_img}"
         )
         # ------------------------------------------------------------------
-        # GOAL 3 (default): restrict registration with the flat-field mask that
-        # the fusion capsule fused using the SAME transforms as the CCF channel
+        # GOAL 3 (default ON): restrict registration with the flat-field mask the
+        # fusion capsule fused using the SAME transforms as the CCF channel
         # (fused_mask_ch.zarr). Applied EXACTLY like the previous manual mask:
         # multiply the mask into the sample image BEFORE resampling. The fused
         # mask shares the sample's grid at this level, so it aligns directly.
-        # Differences from the old manual mask: it is binarized first (the fused
-        # mask has blended UINT16 edges) and written out as .nii.gz. Skips
-        # gracefully if no fused mask is present.
+        # Binarized first (the fused mask has blended UINT16 edges) + written out.
+        #
+        # TOGGLE: the App-Panel parameter sets USE_FUSED_MASK (default "true").
+        # Set it to no/false/0/off to register WITHOUT the fused mask. Skips
+        # gracefully if the toggle is on but no fused mask is present (legacy).
         # ------------------------------------------------------------------
-        mask_img = self._load_fused_mask(
-            acquisition_path, dataset_path, level, ants_img
-        )
-        if mask_img is not None:
-            mask_img = ants.threshold_image(mask_img, 1e-6, 1e12, 1, 0)  # binarize
-            mask_nii = f"{outprefix}{dataset_id}_fused_mask.nii.gz"
-            ants.image_write(mask_img, mask_nii)
-            self.logger.info(f"Load brain mask (fused) from {mask_nii}")
-            ants_img = mask_img * ants_img
+        if _fused_mask_enabled():
+            mask_img = self._load_fused_mask(
+                acquisition_path, dataset_path, level, ants_img
+            )
+            if mask_img is not None:
+                mask_img = ants.threshold_image(mask_img, 1e-6, 1e12, 1, 0)  # binarize
+                mask_nii = f"{outprefix}{dataset_id}_fused_mask.nii.gz"
+                ants.image_write(mask_img, mask_nii)
+                self.logger.info(f"USE_FUSED_MASK on: restricting registration with fused mask {mask_nii}")
+                ants_img = mask_img * ants_img
+            else:
+                self.logger.info("USE_FUSED_MASK on, but no fused mask found; registering unmasked.")
+        else:
+            self.logger.info("USE_FUSED_MASK off: registering WITHOUT the fused brain mask.")
 
         figpath = f"{outprefix}{dataset_id}_loaded_zarr_img"
         plot_antsimgs(ants_img, figpath, title=f"{dataset_id}_loaded_zarr_img", vmin=0, vmax=1.5)
