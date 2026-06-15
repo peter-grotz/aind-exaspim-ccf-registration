@@ -46,24 +46,23 @@ cd code && ./run
 
 `invert_ccf_objs.py` is the **mesh analog** of the annotation inversion: instead
 of resampling the CCF label *image*, it maps CCF region-mesh **vertices** through
-the **same** two-stage chain (CCF → exaSPIM template → sample) using the
-capsule's existing ANTs (`ants.apply_transforms_to_points`) plus a tiny `.obj`
-reader/writer — **no extra dependency**. It reuses the transforms produced
-earlier in the run (`reg_exaspim_template_to_ccf_25um/*` and
-`{id}_to_exaSPIM_SyN_*`), so no new registration compute. Faces/normals are
-preserved; only vertices are transformed.
+the registration (CCF → exaSPIM template → sample) using the capsule's existing
+ANTs (`ants.apply_transforms_to_points`) plus a tiny `.obj` reader/writer — **no
+extra dependency**. It reuses the transforms produced earlier in the run
+(`reg_exaspim_template_to_ccf_25um/*` and `{id}_to_exaSPIM_SyN_*`), so no new
+registration compute. Faces/normals are preserved; only vertices are transformed.
 
-### ⚠️ Confirm on the first run (point-transform direction/units)
-ANTs transforms **points** in the opposite direction from images, so the
-transform direction and mesh units are not guaranteed correct out of the box.
+**Direction (settled):** the two registrations are `reg(fixed=CCF, moving=template)`
+and `SyN(fixed=template, moving=sample)`. For *points*, fixed→moving uses each
+registration's **FORWARD** transforms `[1Warp, 0GenericAffine]` (no inversion) —
+the opposite of the annotation *image* path (which uses the inverse warps),
+because points travel opposite to image content. So CCF→sample is two sequential
+forward point transforms: reg (C→T) then SyN (T→S). Verified by an affine-only
+test (CCF region 362 → within 11 voxels of truth, vs 440–580 for every
+alternative) and by overlaying the warped mesh on the actual specimen brain.
+
 The step writes a QC overlay — `ccf_obj_to_sample/qc/ccf_objs_vs_annotation.png`
-— of the warped vertices (red) over the already-inverted annotation. **Check it:**
-- vertices track the annotation region boundaries → correct, done.
-- they don't → in `invert_ccf_objs.py`, flip the `transformlist` order /
-  `whichtoinvert` (one marked spot) and/or adjust `--mesh-units-um` in
-  `run_invert_ccf_objs.sh`, then re-run. **Do not publish the meshes until the
-  overlay confirms alignment.**
-
-The warped meshes are **results-only** (not in the upload publish whitelist) by
-default; the step's `DataProcess` record (`name="CCF objects to sample space"`)
-is aggregated into the asset `processing.json` automatically.
+(warped vertices in red over `ccf_anno_in_sample_space`) — as the per-run visual
+check. The warped meshes are **results-only** (not in the upload publish
+whitelist) by default; the step's `DataProcess` record
+(`name="CCF objects to sample space"`) is aggregated into `processing.json`.

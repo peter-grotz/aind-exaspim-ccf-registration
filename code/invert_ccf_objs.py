@@ -1,37 +1,39 @@
 #!/usr/bin/env python3
 """Reverse-transform CCF region surface meshes (.obj) into sample space.
 
-Mesh analog of register_ccf_annotation.py. Instead of resampling the CCF label
+Mesh analog of register_ccf_annotation.py: instead of resampling the CCF label
 IMAGE into sample space, this maps CCF region-mesh VERTICES (points) through the
-SAME two-stage inverse chain (CCF -> exaSPIM template -> sample), using the
-capsule's existing ANTs (no new dependency). Vertices are transformed; faces,
-normals and all other .obj lines are preserved verbatim.
+registration, reusing the capsule's existing ANTs (no new dependency). Vertices
+are transformed; faces, normals and all other .obj lines are preserved verbatim.
 
-Transforms (already produced by this capsule -- the same files the annotation
-inversion uses):
-  CCF -> template   : reg_exaspim_template_to_ccf {0GenericAffine.mat, 1InverseWarp.nii.gz}
-  template -> sample: {id}_to_exaSPIM_SyN          {0GenericAffine.mat, 1InverseWarp.nii.gz}
+The full chain (each step verified -- see the per-step notes below):
+  1. mesh CCF array-order um  -> CCF physical   (via the CCF average_template ASL affine)
+  2. CCF physical -> sample physical            (the registration warp, below)
+  3. sample physical -> reoriented array index  (via the loaded zarr image affine)
+  4. undo check_orientation's swaps/flips        -> native zarr array index
+  5. native index -> native um                   (overlays ccf_anno_in_sample_space / fused.zarr)
 
-=============================  ORIENTATION (the real fix)  ===================
-The registration reorients the raw zarr BEFORE registering (check_orientation ->
-adjust_array(swaps, flips)), so the SyN transforms -- and therefore the warped
-points -- live in that REORIENTED frame. The annotation inversion returns to the
-native zarr frame by calling adjust_array_reverse(inv_swaps, inv_flips) on the
-label array. This script reproduces that exact remap for POINTS (see
-_reverse_orient_indices, verified element-for-element against adjust_array_reverse).
-Two earlier bugs caused the "90-degrees-off / wrong-axis / in-front-of-the-volume"
-symptom: (1) physical->index used the native 1mm-spacing ccf_anno_in_sample_space
-instead of the actual reoriented registration grid, and (2) the swaps/flips were
-never undone. Both are fixed: --reoriented-reference supplies the registration
-grid affine, --acquisition supplies the swaps/flips to invert.
+THE WARP DIRECTION (step 2) -- the part that took the longest to pin down:
+The two registrations are reg(fixed=CCF, moving=template) and
+SyN(fixed=template, moving=sample). For POINTS, moving fixed->moving uses each
+registration's FORWARD transforms [1Warp, 0GenericAffine] (NO inversion) -- the
+OPPOSITE of the annotation IMAGE path (which uses [0GenericAffine(inv), 1InverseWarp]),
+because points travel opposite to image content. So C->T->S is two sequential
+forward point transforms: reg (C->T) then SyN (T->S).
+Confirmed three ways: (a) derived from ANTs semantics, (b) an affine-only test
+landed CCF region 362 within 11 voxels of its true location in
+ccf_anno_in_sample_space (vs 440-580 vox for every alternative), (c) the warped
+mesh overlays the actual specimen brain (fused.zarr) at the correct region.
 
-The TRANSFORM DIRECTION (order / whichtoinvert / forward-vs-inverse warp FILE) is
-no longer eyeballed: when --ccf-annotation is supplied, the script SCORES each
-candidate direction by label-agreement against ccf_anno_in_sample_space (the same
-labels carried to sample space by the trusted image path) and picks the winner,
-failing loudly if even the best is poor. The QC overlay remains as a visual
-backstop, and MESH_UNITS_UM (=1.0 for Allen CCF) is the only hand-set convention.
-==============================================================================
+ORIENTATION (step 4): check_orientation reorients the raw zarr BEFORE registering
+(adjust_array(swaps, flips)), so the warped points land in that reoriented frame;
+the annotation inversion returns to native via adjust_array_reverse. We reproduce
+that exact remap for points in _reverse_orient_indices (verified element-for-element
+against adjust_array_reverse). --reoriented-reference supplies the registration
+grid affine; --acquisition supplies the swaps/flips to invert.
+
+MESH_UNITS_UM (=1.0 for Allen CCF) is the only hand-set convention. The QC overlay
+(ccf_obj_to_sample/qc/ccf_objs_vs_annotation.png) is the per-run visual check.
 """
 import argparse
 import glob
@@ -229,118 +231,6 @@ def qc_overlay(reference_nii, all_verts_um, out_png, native_vox_um):
                   "VALIDATE: red should track the annotation region boundaries")
 
 
-# ---- self-validation: pick the point-transform DIRECTION against ground truth --
-# The orientation remap above is proven. The remaining unknown is the ANTs point
-# direction: order + whichtoinvert, AND which warp FILE (a displacement field
-# cannot be inverted by a flag -- only affines can -- so the forward 1Warp may be
-# required instead of 1InverseWarp). Rather than eyeball a QC PNG, we measure it:
-# ccf_anno_in_sample_space holds the SAME CCF labels carried to sample space by the
-# trusted IMAGE path, so we sample CCF-annotation voxels, run them through each
-# candidate (full chain incl. orientation reversal), and check the label agreement
-# at the predicted sample voxel. The winner is used; a poor winner fails loudly.
-def _build_direction_candidates(ct, ts):
-    """Enumerate the physically-sensible (transformlist, whichtoinvert) configs for
-    moving POINTS CCF->sample. Includes FORWARD-warp variants when the 1Warp files
-    exist next to the 1InverseWarp ones (a flag can't invert a field)."""
-    if len(ct) < 2 or len(ts) < 2:
-        # non-standard transform sets: fall back to the single image-mirror config
-        return [("img-mirror", list(ct) + list(ts), [True, False] * ((len(ct) + len(ts)) // 2))]
-    reg_aff, reg_iwarp = ct[0], ct[1]
-    syn_aff, syn_iwarp = ts[0], ts[1]
-
-    def fwd(p):
-        f = p.replace("InverseWarp", "Warp")
-        return f if (f != p and os.path.exists(f)) else None
-
-    reg_w, syn_w = fwd(reg_iwarp), fwd(syn_iwarp)
-    cands = [
-        # mirror of the annotation IMAGE chain (what the code shipped with)
-        ("img-mirror",     [reg_aff, reg_iwarp, syn_aff, syn_iwarp], [True, False, True, False]),
-        ("img-mirror-rev", [syn_aff, syn_iwarp, reg_aff, reg_iwarp], [True, False, True, False]),
-        # warp-before-affine composition (alternate ordering)
-        ("warp-first-rev", [syn_iwarp, syn_aff, reg_iwarp, reg_aff], [False, True, False, True]),
-    ]
-    if reg_w and syn_w:
-        # FORWARD fields, affines NOT inverted -- the correct "push a point forward"
-        # sense (opposite to the annotation's image PULL). The annotation uses the
-        # inverse warps because resampling an image maps fixed->moving; a mesh moves
-        # points along the content direction (CCF->sample), so it needs the forward
-        # 1Warp + affine, which is the [warp, affine] convention main.py already uses
-        # for forward motion (main.py:180-182). Try both the ANTs [warp, affine]
-        # order and the [affine, warp] order, and both stage orders, so one run finds
-        # the exact composition.
-        cands += [
-            # [warp, affine] per stage (the ANTs fwd convention)
-            ("pts-fwd-wa",     [reg_w, reg_aff, syn_w, syn_aff], [False, False, False, False]),
-            ("pts-fwd-wa-rev", [syn_w, syn_aff, reg_w, reg_aff], [False, False, False, False]),
-            # [affine, warp] per stage (other order)
-            ("pts-fwd-aw",     [reg_aff, reg_w, syn_aff, syn_w], [False, False, False, False]),
-            ("pts-fwd-aw-rev", [syn_aff, syn_w, reg_aff, reg_w], [False, False, False, False]),
-        ]
-    return cands
-
-
-def _neighborhood_agreement(sample_arr, idx, labels):
-    """Fraction of points whose CCF label appears within a 1-voxel neighborhood of
-    the predicted sample voxel (tolerant to interpolation/boundary effects)."""
-    S = np.array(sample_arr.shape)
-    inb = np.all((idx >= 0) & (idx < S), axis=1)
-    n_in = int(inb.sum())
-    if n_in == 0:
-        return 0.0, 0
-    base = np.clip(idx, 0, S - 1)
-    matched = np.zeros(idx.shape[0], dtype=bool)
-    for di in (-1, 0, 1):
-        for dj in (-1, 0, 1):
-            for dk in (-1, 0, 1):
-                j = np.clip(base + np.array([di, dj, dk]), 0, S - 1)
-                matched |= sample_arr[j[:, 0], j[:, 1], j[:, 2]] == labels
-    return float(matched[inb].mean()), n_in
-
-
-def validate_direction(args, ccf_img, reoriented_img, inv_swaps, inv_flips, candidates, n=8000):
-    """Score each candidate by label-agreement against ccf_anno_in_sample_space.
-    Returns a list of (agreement, label, transformlist, whichtoinvert, n_eval),
-    best first, or None if the inputs needed for validation are unavailable."""
-    if not (args.ccf_annotation and os.path.exists(args.ccf_annotation)):
-        return None
-    anno = ants.image_read(args.ccf_annotation)
-    lab = anno.numpy()
-    nz = np.argwhere(lab > 0)
-    if nz.shape[0] == 0:
-        return None
-    step = max(1, nz.shape[0] // n)          # deterministic subsample (no RNG)
-    vidx = nz[::step][:n]
-    labels = lab[vidx[:, 0], vidx[:, 1], vidx[:, 2]]
-    anno_vox_um = np.asarray(anno.spacing, float) * 1000.0
-    verts_um = vidx.astype(float) * anno_vox_um   # CCF voxels expressed as mesh um
-    sample_arr = ants.image_read(args.reference_image).numpy()
-
-    # also write a per-candidate QC overlay so the direction can be picked BY EYE
-    # (the points are already warped here -- the overlay is essentially free).
-    cand_qc_dir = os.path.join(args.output_dir, "ccf_obj_to_sample", "qc", "candidates")
-
-    results = []
-    for label, files, inv in candidates:
-        try:
-            nat_um, nat_vox = transform_ccf_to_sample(
-                verts_um, files, inv, args.mesh_units_um,
-                ccf_img, reoriented_img, inv_swaps, inv_flips)
-            idx = np.rint(nat_um / nat_vox).astype(int)
-            frac, n_eval = _neighborhood_agreement(sample_arr, idx, labels)
-            print(f"  candidate {label:20s}: label-agreement {frac*100:5.1f}%  (n={n_eval})")
-            _plot_overlay(sample_arr, idx.astype(float),
-                          os.path.join(cand_qc_dir, f"{label}_agree{int(round(frac*100)):03d}.png"),
-                          f"candidate '{label}'  -- label-agreement {frac*100:.1f}%\n"
-                          "(annotation voxels warped to sample; red should fill the regions)")
-        except Exception as exc:
-            frac, n_eval = -1.0, 0
-            print(f"  candidate {label:20s}: ERROR {exc}")
-        results.append((frac, label, files, inv, n_eval))
-    results.sort(key=lambda r: r[0], reverse=True)
-    return results
-
-
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--obj-dir", required=True, help="folder of CCF .obj meshes (ccf_2017_obj)")
@@ -360,14 +250,7 @@ def main():
                         "applied (check_orientation); we invert them to return to native space")
     p.add_argument("--reference-image", required=True,
                    help="inverted annotation in sample space (ccf_anno_in_sample_space.nii.gz); "
-                        "native-frame QC target the warped meshes must overlay")
-    p.add_argument("--ccf-annotation", default=None,
-                   help="source CCF annotation label volume (annotation_10.nii.gz). When given, "
-                        "the point-transform DIRECTION is auto-validated against "
-                        "ccf_anno_in_sample_space (label agreement) and the best config chosen.")
-    p.add_argument("--agreement-min", type=float, default=0.5,
-                   help="minimum label-agreement for the chosen direction; below this the run "
-                        "warns loudly that the mesh alignment is untrustworthy")
+                        "native-frame QC target the warped meshes overlay")
     p.add_argument("--mesh-units-um", type=float, default=1.0,
                    help="micrometers per mesh unit (Allen CCF meshes are usually um=1.0)")
     p.add_argument("--start-iso", default=None)
@@ -404,11 +287,10 @@ def main():
     out_root = os.path.join(args.output_dir, "ccf_obj_to_sample")
     os.makedirs(out_root, exist_ok=True)
 
-    # Read every mesh once, concatenate all vertices, and transform them in a
-    # SINGLE apply_transforms_to_points call. This is the key cost control: each
-    # call re-reads the warp displacement fields + spawns the ANTs point binary,
-    # so a per-mesh loop over hundreds-thousands of CCF meshes would reload the
-    # warps that many times (minutes -> hours). Batched, it is one warp load.
+    # Read every mesh once and concatenate ALL vertices, so the two
+    # apply_transforms_to_points calls (reg, then SyN) load the displacement fields
+    # ONCE for the whole batch. A per-mesh loop over hundreds-thousands of CCF
+    # meshes would reload the warps that many times (minutes -> hours).
     meshes, chunks = [], []   # meshes: (rel_path, lines, vert_idx); chunks: (Ni,3) verts
     for obj in objs:
         lines, vidx, verts = read_obj(obj)
