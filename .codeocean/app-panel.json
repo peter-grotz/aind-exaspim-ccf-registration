@@ -1,0 +1,13 @@
+{
+	"version": 1,
+	"parameters": [
+		{
+			"id": "j1hOj2Skn0Oldt4d",
+			"name": "Use brain mask for registration? (yes/no)",
+			"description": "Choose to restrict registration using the fused mask of the brain volume",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "yes"
+		}
+	]
+}
