@@ -22,7 +22,7 @@ python -u finalize_registration_metadata.py
 # the real Python traceback / missing-input message.
 INVERT_LOG="/results/ccf_alignment/registration_metadata/ccf_mesh_invert.log"
 mkdir -p "$(dirname "$INVERT_LOG")"
-if sh run_invert_ccf_objs.sh > "$INVERT_LOG" 2>&1; then
+if bash run_invert_ccf_objs.sh > "$INVERT_LOG" 2>&1; then
     echo "CCF obj inversion completed (log: ccf_alignment/registration_metadata/ccf_mesh_invert.log)"
 else
     echo "CCF obj inversion failed (non-fatal) -- tail of ccf_mesh_invert.log:"

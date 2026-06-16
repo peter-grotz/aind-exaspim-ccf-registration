@@ -13,7 +13,9 @@ SUBJECTID=$(echo "${DATASET_PATH}" | grep -oP 'exaSPIM_\K[0-9]+')
 # fused.zarr, while registration reads its sibling fused_ccf_ch.zarr. They share the
 # voxel grid; we express the micron meshes against fused.zarr so scale AND origin
 # match exactly what Horta uses. Falls back to DATASET_PATH if the name doesn't match.
-FUSED_ZARR="${DATASET_PATH/fused_ccf_ch.zarr/fused.zarr}"
+# POSIX-safe substitution (this script may be invoked via `sh`/dash, which lacks
+# bash's ${var/find/replace}); sed leaves DATASET_PATH unchanged if it doesn't match.
+FUSED_ZARR=$(printf '%s' "$DATASET_PATH" | sed 's#fused_ccf_ch\.zarr#fused.zarr#')
 echo "DATASET_PATH=${DATASET_PATH}  SUBJECTID=${SUBJECTID}  FUSED_ZARR=${FUSED_ZARR}"
 
 # CCF region meshes (data asset connected to this capsule).
