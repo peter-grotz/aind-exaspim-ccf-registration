@@ -17,4 +17,14 @@ python -u finalize_registration_metadata.py
 
 # Reverse-transform the CCF region meshes (.obj) into sample space, reusing the
 # transforms produced above. Non-fatal: a failure here must not fail registration.
-sh run_invert_ccf_objs.sh || echo "CCF obj inversion failed (non-fatal)"
+# Capture output to a results-only log and surface a tail on failure, so a silent
+# "failed (non-fatal)" is actually diagnosable on the next run instead of hiding
+# the real Python traceback / missing-input message.
+INVERT_LOG="/results/ccf_alignment/registration_metadata/ccf_mesh_invert.log"
+mkdir -p "$(dirname "$INVERT_LOG")"
+if sh run_invert_ccf_objs.sh > "$INVERT_LOG" 2>&1; then
+    echo "CCF obj inversion completed (log: ccf_alignment/registration_metadata/ccf_mesh_invert.log)"
+else
+    echo "CCF obj inversion failed (non-fatal) -- tail of ccf_mesh_invert.log:"
+    tail -n 30 "$INVERT_LOG" || true
+fi
