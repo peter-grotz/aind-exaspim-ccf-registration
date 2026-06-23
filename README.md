@@ -48,9 +48,11 @@ cd code && ./run
 - `ccf_aligned.zarr/`, `ccf_anno_to_sample/{ccf_anno_in_sample_space.nii.gz,.zarr}`
 - `*_data_process.json` (per step) + `registration_metadata/{id}_fused_mask.nii.gz`
 - `mask_qc/{id}_fused_mask_vs_template_mask.png` — QC overlay (results-only)
-- `ccf_mesh_to_sample/` — CCF region meshes warped into sample space (**published
-  to S3** under `ccf_alignment/ccf_mesh_to_sample/` by the upload capsule),
-  `+ ccf_mesh_to_sample/qc/ccf_mesh_vs_annotation.png` (QC overlay)
+- `ccf_mesh_to_sample/` — CCF region meshes warped into sample space. The `.obj`
+  files are **published to S3** under `ccf_alignment/ccf_mesh_to_sample/` by the
+  upload capsule (whitelisted as `ccf_mesh_to_sample/**/*.obj`). The QC overlay
+  `ccf_mesh_to_sample/qc/ccf_mesh_vs_annotation.png` is **results-only** (the
+  whitelist matches only `.obj`, so the `qc/` folder is never uploaded).
 - `ccf_obj_to_sample_micron/` — the same warped meshes re-expressed in the fused
   image's **true physical micrometers**, `(x, y, z)` column order, ready to import
   into viewers such as **HortaCloud**. **Results-only — NOT uploaded to S3** (it is
@@ -77,8 +79,9 @@ alternative) and by overlaying the warped mesh on the actual specimen brain.
 
 The step writes a QC overlay — `ccf_mesh_to_sample/qc/ccf_mesh_vs_annotation.png`
 (warped vertices in red over `ccf_anno_in_sample_space`) — as the per-run visual
-check. The warped meshes are **published to S3** at
-`ccf_alignment/ccf_mesh_to_sample/` (the upload capsule whitelists this folder);
+check; this overlay stays **results-only**. The warped meshes (`.obj`) are
+**published to S3** at `ccf_alignment/ccf_mesh_to_sample/` (the upload capsule
+whitelists `ccf_mesh_to_sample/**/*.obj` — meshes only, not the `qc/` folder);
 the step's `DataProcess` record (`name="CCF meshes to sample space"`) is
 aggregated into `processing.json`.
 
