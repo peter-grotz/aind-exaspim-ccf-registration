@@ -259,8 +259,15 @@ def main() -> None:
                 "level": level,
                 "resolution_um": resolution,
                 "dataset_id": dataset_id,
+                # use_fused_mask = what was REQUESTED (the App-Panel toggle);
+                # mask_applied = what ACTUALLY happened. They differ when the toggle is
+                # on but the fused mask was missing/empty (e.g. mask fusion failed), in
+                # which case registration ran UNMASKED. The fused-mask nii is written
+                # only when the mask is actually multiplied in, so its presence is the
+                # reliable signal.
                 "use_fused_mask": os.environ.get("USE_FUSED_MASK", "true").strip().lower()
                                   not in ("0", "false", "no", "off", "none", "skip", "n", "f", ""),
+                "mask_applied": os.path.exists(f"{outprefix}{dataset_id}_fused_mask.nii.gz"),
                 "sample_to_template_registration": example_input["reg_param_25um"],
                 "template_to_ccf_transforms": exaspim_to_ccf_transform_path,
             },
