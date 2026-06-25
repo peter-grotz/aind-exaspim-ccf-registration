@@ -233,7 +233,7 @@ def main() -> None:
     # is folded into the alignment record (start_date_time spans the load), so
     # there is no separate "Image importing" record.
     start_date_time = datetime.now(timezone.utc)
-    image_path = f"{fused_path}{level}"
+    image_path = f"{fused_path.rstrip('/')}/{level}"  # slash-safe: a manifest input_uri without a trailing slash must not yield fused_ccf_ch.zarr<level>
     image = load_zarr(image_path, logger)
 
     #-----------------------------------------------#
@@ -327,7 +327,7 @@ def main() -> None:
         #-----------------------------------------------#
         # Import + 10 um atlas alignment recorded as ONE process (import folded in).
         start_date_time = datetime.now(timezone.utc)
-        image_path = f"{fused_path}{level}"
+        image_path = f"{fused_path.rstrip('/')}/{level}"  # slash-safe: a manifest input_uri without a trailing slash must not yield fused_ccf_ch.zarr<level>
         image = load_zarr(image_path, logger)
 
         #-----------------------------------------------#
