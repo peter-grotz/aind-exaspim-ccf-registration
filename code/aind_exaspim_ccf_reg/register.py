@@ -212,10 +212,31 @@ class ImagePreprocessor:
             )
             if mask_img is not None:
                 mask_img = ants.threshold_image(mask_img, 1e-6, 1e12, 1, 0)  # binarize
-                mask_nii = f"{outprefix}{dataset_id}_fused_mask.nii.gz"
-                ants.image_write(mask_img, mask_nii)
-                self.logger.info(f"USE_FUSED_MASK on: restricting registration with fused mask {mask_nii}")
-                ants_img = mask_img * ants_img
+                # A failed/partial mask fusion can leave an EMPTY fused_mask_ch.zarr
+                # container (the fusion capsule writes the OME-Zarr metadata BEFORE the
+                # EMR job; if that job fails, the pixels are never filled and missing
+                # chunks read back as zeros). zarr.open then SUCCEEDS, so _load_fused_mask
+                # returns an all-zero mask rather than None -- and multiplying it into the
+                # sample zeroes the whole image, after which ANTs aborts with "Total Mass
+                # of the image was zero". Guard on CONTENT, not just presence: if the
+                # binarized mask has (near-)zero foreground it's unusable, so register
+                # UNMASKED (a mask-fusion failure should degrade, not crash -- the design
+                # already treats the mask as best-effort).
+                mask_arr = mask_img.numpy()
+                fg = float(mask_arr.sum())
+                frac = fg / float(mask_arr.size or 1)
+                if frac < 0.005:  # a real brain mask covers far more than 0.5% of the volume
+                    self.logger.info(
+                        f"USE_FUSED_MASK on, but the fused mask is empty/degenerate "
+                        f"(foreground {fg:.0f} vox = {frac:.4%}) -- the mask fusion likely "
+                        f"FAILED for this sample. Registering UNMASKED.")
+                else:
+                    mask_nii = f"{outprefix}{dataset_id}_fused_mask.nii.gz"
+                    ants.image_write(mask_img, mask_nii)
+                    self.logger.info(
+                        f"USE_FUSED_MASK on: restricting registration with fused mask "
+                        f"{mask_nii} (brain foreground {frac:.2%})")
+                    ants_img = mask_img * ants_img
             else:
                 self.logger.info("USE_FUSED_MASK on, but no fused mask found; registering unmasked.")
         else:
