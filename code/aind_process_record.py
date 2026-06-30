@@ -20,7 +20,7 @@ Usage (in a producer):
         process_type="Image atlas alignment",
         name="Image atlas alignment - 25 um",
         start=start_dt, end=end_dt,
-        code_url="https://github.com/AllenNeuralDynamics/aind-exaspim-ccf-registration.git",
+        code_url="https://codeocean.allenneuraldynamics.org/capsule/6898460/tree",
         code_name="aind-exaspim-ccf-registration", code_version="0.0.1",
         parameters={"resolution_um": 25},
         experimenters=["Peter Grotz"], output_path="ccf_alignment/",

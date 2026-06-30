@@ -421,7 +421,7 @@ def main():
             name="CCF meshes to sample space",
             start=start,
             end=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            code_url="https://github.com/AllenNeuralDynamics/aind-exaspim-ccf-registration.git",
+            code_url="https://codeocean.allenneuraldynamics.org/capsule/6898460/tree",
             code_name="aind-exaspim-ccf-registration",
             code_version="0.0.1",
             run_script="/code/run_invert_ccf_objs.sh",

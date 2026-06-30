@@ -38,7 +38,10 @@ from aind_exaspim_ccf_reg.register import RegistrationPipeline
 from argschema import ArgSchemaParser
 
 __version__ = "0.0.1"
-code_url = "https://github.com/AllenNeuralDynamics/aind-exaspim-ccf-registration.git"
+# Provenance points at the production Code Ocean capsule (AllenNeuralDynamics-owned),
+# which currently holds the running code; switch to the AIND GitHub repo once the code
+# lives there.
+code_url = "https://codeocean.allenneuraldynamics.org/capsule/6898460/tree"
 
 
 def _apply_output_prefix(path: str) -> str:

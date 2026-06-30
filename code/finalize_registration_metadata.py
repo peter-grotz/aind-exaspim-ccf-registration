@@ -18,7 +18,8 @@ from aind_process_record import make_data_process, write_data_process
 
 RESULTS_DIR = Path("../results")
 CCF_ALIGNMENT_DIR = RESULTS_DIR / "ccf_alignment"
-CODE_URL = "https://github.com/AllenNeuralDynamics/aind-exaspim-ccf-registration.git"
+# Production Code Ocean capsule (AllenNeuralDynamics-owned), where the code currently runs.
+CODE_URL = "https://codeocean.allenneuraldynamics.org/capsule/6898460/tree"
 CODE_NAME = "aind-exaspim-ccf-registration"
 VERSION = "0.0.1"
 
