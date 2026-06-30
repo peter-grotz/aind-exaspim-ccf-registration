@@ -434,20 +434,19 @@ def print_system_information(logger: logging.Logger, code_ocean: Optional[bool] 
 
 def pad_array_n_d(arr: np.ndarray, dim: int = 5) -> np.ndarray:
     """
-    Pads a daks array to be in a 5D shape.
+    Pad a dask/numpy array to a 5D shape.
 
     Parameters
-    ------------------------
-
+    ----------
     arr: ArrayLike
-        Dask/numpy array that contains image data.
+        Array containing image data.
     dim: int
-        Number of dimensions that the array will be padded
+        Target number of dimensions.
 
     Returns
-    ------------------------
+    -------
     ArrayLike:
-        Padded dask/numpy array.
+        Padded array.
     """
     if dim > 5:
         raise ValueError("Padding more than 5 dimensions is not supported.")
@@ -459,23 +458,19 @@ def pad_array_n_d(arr: np.ndarray, dim: int = 5) -> np.ndarray:
 
 def parse_zarr_metadata(metadata: Dict, multiscale: Optional[str] = None) -> Dict:
     """
-    Parses the zarr metadata and retrieves
-    the metadata we need in the correct format.
+    Parse zarr metadata into the required format.
 
     Parameters
     ----------
     metadata: Dict
-        Metadata dictionary that contains ".zattrs" and
-        ".zarray"
-
+        Metadata dictionary containing ".zattrs" and ".zarray".
     multiscale: Optional[str]
-        Multiscale we're retieving the metadata for.
-        Default: None
+        Multiscale level to retrieve metadata for. Default: None.
 
     Returns
     -------
     Dict
-        Dictionary with the metadata we need
+        Parsed metadata.
     """
     parsed_metadata = {"axes": {}}
     zattrs = metadata.get(".zattrs")

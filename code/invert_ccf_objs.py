@@ -1,38 +1,27 @@
 #!/usr/bin/env python3
 """Reverse-transform CCF region surface meshes (.obj) into sample space.
 
-Mesh analog of register_ccf_annotation.py: instead of resampling the CCF label
-IMAGE into sample space, this maps CCF region-mesh VERTICES (points) through the
-registration, reusing the capsule's existing ANTs (no new dependency). Vertices
-are transformed; faces, normals and all other .obj lines are preserved verbatim.
+Maps CCF region-mesh vertices (points) through the registration. Vertices are
+transformed; faces, normals and all other .obj lines are preserved.
 
-The full chain (each step verified -- see the per-step notes below):
-  1. mesh CCF array-order um  -> CCF physical   (via the CCF average_template ASL affine)
-  2. CCF physical -> sample physical            (the registration warp, below)
-  3. sample physical -> reoriented array index  (via the loaded zarr image affine)
+Chain:
+  1. mesh CCF array-order um  -> CCF physical   (CCF average_template affine)
+  2. CCF physical -> sample physical            (registration warp)
+  3. sample physical -> reoriented array index  (loaded zarr image affine)
   4. undo check_orientation's swaps/flips        -> native zarr array index
-  5. native index -> native um                   (overlays ccf_anno_in_sample_space / fused.zarr)
+  5. native index -> native um                   (matches ccf_anno_in_sample_space / fused.zarr)
 
-THE WARP DIRECTION (step 2) -- the part that took the longest to pin down:
-The two registrations are reg(fixed=CCF, moving=template) and
-SyN(fixed=template, moving=sample). For POINTS, moving fixed->moving uses each
-registration's FORWARD transforms [1Warp, 0GenericAffine] (NO inversion) -- the
-OPPOSITE of the annotation IMAGE path (which uses [0GenericAffine(inv), 1InverseWarp]),
-because points travel opposite to image content. So C->T->S is two sequential
-forward point transforms: reg (C->T) then SyN (T->S).
-Confirmed three ways: (a) derived from ANTs semantics, (b) an affine-only test
-landed CCF region 362 within 11 voxels of its true location in
-ccf_anno_in_sample_space (vs 440-580 vox for every alternative), (c) the warped
-mesh overlays the actual specimen brain (fused.zarr) at the correct region.
+Step 2: reg(fixed=CCF, moving=template) and SyN(fixed=template, moving=sample).
+For points, fixed->moving uses each registration's forward transforms
+[1Warp, 0GenericAffine] (no inversion), opposite of the annotation image path.
+C->T->S is two sequential forward point transforms: reg (C->T) then SyN (T->S).
 
-ORIENTATION (step 4): check_orientation reorients the raw zarr BEFORE registering
-(adjust_array(swaps, flips)), so the warped points land in that reoriented frame;
-the annotation inversion returns to native via adjust_array_reverse. We reproduce
-that exact remap for points in _reverse_orient_indices (verified element-for-element
-against adjust_array_reverse). --reoriented-reference supplies the registration
-grid affine; --acquisition supplies the swaps/flips to invert.
+Step 4: check_orientation reorients the raw zarr before registering, so warped
+points land in that reoriented frame; _reverse_orient_indices remaps points back
+to native. --reoriented-reference supplies the grid affine; --acquisition supplies
+the swaps/flips to invert.
 
-MESH_UNITS_UM (=1.0 for Allen CCF) is the only hand-set convention. The QC overlay
+mesh_units_um defaults to 1.0 (Allen CCF). The QC overlay
 (ccf_mesh_to_sample/qc/ccf_mesh_vs_annotation.png) is the per-run visual check.
 """
 import argparse
@@ -46,18 +35,18 @@ import ants
 
 try:
     import pandas as pd
-except Exception:  # pandas ships with the capsule's stack; guard just in case
+except Exception:
     pd = None
 
-# get_adjustments lives in the capsule package; we derive the SAME swaps/flips the
-# registration used, so we can UNDO them on the points (see orientation note below).
+# Used to derive the same swaps/flips the registration applied, so they can be
+# undone on the points.
 from aind_exaspim_ccf_reg.preprocess import get_adjustments
 
 
-# --- tiny .obj I/O: transform only "v" (vertex) lines, keep everything else ---
+# --- .obj I/O: transform only "v" (vertex) lines, keep everything else ---
 def read_obj(path):
-    """Return (lines, vert_idx, verts) where verts is (N,3) and vert_idx maps
-    each vertex row back to its line in `lines` (so we can rewrite in place)."""
+    """Return (lines, vert_idx, verts): verts is (N,3); vert_idx maps each vertex
+    row back to its line in `lines` for in-place rewriting."""
     lines = open(path, "r").read().splitlines()
     verts, vert_idx = [], []
     for i, ln in enumerate(lines):
@@ -76,13 +65,10 @@ def write_obj(path, lines, vert_idx, new_verts):
     open(path, "w").write("\n".join(lines) + "\n")
 
 
-# ---- geometry: ANTs array-index <-> physical, applying the image's affine -----
-# This is the step the old `verts/1000` omitted. The mesh is in CCF *array-order
-# micrometers* (it overlays the CCF voxel grid directly), but ANTs point
-# transforms work in *physical* space, and the CCF volume's affine PERMUTES +
-# FLIPS axes. So we must go array -> physical (via the CCF image) before the warp
-# and physical -> array (via the sample image) after, or the meshes come out
-# rotated/mirrored.
+# ---- geometry: array-index <-> physical, applying the image's affine -----
+# The mesh is in CCF array-order micrometers; ANTs point transforms work in
+# physical space, and the CCF affine permutes and flips axes. Convert array ->
+# physical before the warp and physical -> array after.
 def _index_to_physical(idx, img):
     sp = np.asarray(img.spacing, float)
     org = np.asarray(img.origin, float)
@@ -97,20 +83,15 @@ def _physical_to_index(phys, img):
     return (np.linalg.inv(d) @ (np.asarray(phys, float) - org).T).T / sp
 
 
-# ---- the orientation reversal the annotation does, expressed for POINTS --------
-# Before registration, check_orientation() reorients the raw zarr with
-# adjust_array(swaps, flips), so the SyN transforms (and therefore the warped
-# POINTS) live in that *reoriented* frame. The annotation inversion gets back to
-# the native zarr frame by calling adjust_array_reverse(inv_swaps, inv_flips) on
-# the resampled label ARRAY. A point/vertex can't be "flipped/moved" as an array,
-# so we reproduce the exact same index remap analytically:
-#   * a flip of axis a:  index_a -> (Sr[a]-1) - index_a   (Sr = reoriented shape)
-#   * the axis move:     n[i] = flipped[order[i]]         (order = np.moveaxis order)
-# This map was verified element-for-element against adjust_array_reverse for every
-# swap/flip configuration (incl. the observed [(2,0),(1,2),(0,1)]).
+# ---- orientation reversal, expressed for POINTS --------
+# check_orientation() reorients the raw zarr with adjust_array(swaps, flips)
+# before registering, so warped points live in that reoriented frame. This
+# reproduces adjust_array_reverse as an index remap on points:
+#   * flip of axis a:  index_a -> (Sr[a]-1) - index_a   (Sr = reoriented shape)
+#   * axis move:       n[i] = flipped[order[i]]         (order = np.moveaxis order)
 def _acquisition_swaps_flips(acquisition_path):
-    """Return (swaps, flips) exactly as the registration computed them, by
-    reading the acquisition metadata and the beta/alpha-scope direction map."""
+    """Return (swaps, flips) the registration computed, from the acquisition
+    metadata and the beta/alpha-scope direction map."""
     with open(acquisition_path, "r") as f:
         metadata = json.load(f)
     first_tile = metadata["tiles"][0]["file_name"]
@@ -130,9 +111,9 @@ def _moveaxis_order(ndim, source, destination):
 
 
 def _reverse_orient_indices(idx_reor, reor_shape, inv_swaps, inv_flips):
-    """Map reoriented-frame array indices -> native zarr-frame array indices,
-    reproducing adjust_array_reverse(arr, inv_swaps, inv_flips). Also returns the
-    axis `order` so the caller can permute the voxel size the same way."""
+    """Map reoriented-frame array indices -> native zarr-frame array indices.
+    Also returns the axis `order` so the caller can permute the voxel size the
+    same way."""
     r = np.asarray(idx_reor, float).copy()
     for a in inv_flips:
         r[:, a] = (reor_shape[a] - 1) - r[:, a]
@@ -146,41 +127,31 @@ def _reverse_orient_indices(idx_reor, reor_shape, inv_swaps, inv_flips):
 
 def transform_ccf_to_sample(verts, ccf_to_template_fwd, template_to_sample_fwd, mesh_units_um,
                             ccf_img, reoriented_img, inv_swaps, inv_flips):
-    """Map CCF mesh vertices -> NATIVE sample space.
+    """Map CCF mesh vertices -> native sample space.
 
-    DIRECTION (derived from ANTs semantics + confirmed by an affine-only test that
-    landed CCF region 362 within 11 voxels of its true location in
-    ccf_anno_in_sample_space, vs 440-580 vox for every alternative):
-
-    The two registrations are reg(fixed=CCF, moving=template) and
-    SyN(fixed=template, moving=sample). For POINTS, moving fixed->moving uses each
-    registration's FORWARD transforms [1Warp, 0GenericAffine] (NO inversion) --
-    the opposite of the annotation IMAGE path, because points travel opposite to
-    image content. The path C->T->S is therefore two sequential point transforms:
-      1) reg  FORWARD  (C -> T)
-      2) SyN  FORWARD  (T -> S)
-    applied as two calls (unambiguous composition), each whichtoinvert all-False.
+    Applies two sequential forward point transforms: reg (C->T) then SyN (T->S),
+    each with whichtoinvert all-False.
 
     verts: (N,3) CCF array-order micrometers (x mesh_units_um -> um).
     Returns (warped_verts_um (N,3), native_voxel_um (3,), native_shape (3,)) in
     native zarr array orientation (same frame as ccf_anno_in_sample_space), scaled
-    by native voxel um. native_shape is the native (z,y,x) grid size -- used to
+    by native voxel um. native_shape is the native (z,y,x) grid size, used to
     auto-detect the fused pyramid level for the physical-micron (Horta) export.
     """
     if pd is None:
         raise RuntimeError("pandas required for ants.apply_transforms_to_points")
-    # 1) mesh um -> CCF array index -> CCF physical (applies the CCF ASL affine)
+    # 1) mesh um -> CCF array index -> CCF physical
     ccf_vox_um = np.asarray(ccf_img.spacing, float) * 1000.0
     idx_ccf = (verts * mesh_units_um) / ccf_vox_um
     phys = _index_to_physical(idx_ccf, ccf_img)
-    # 2) two-stage FORWARD point transform: reg (C->T) then SyN (T->S)
+    # 2) forward point transform: reg (C->T) then SyN (T->S)
     df = pd.DataFrame(phys, columns=["x", "y", "z"])
     df = ants.apply_transforms_to_points(3, df, list(ccf_to_template_fwd),
                                          whichtoinvert=[False] * len(ccf_to_template_fwd))
     df = ants.apply_transforms_to_points(3, df, list(template_to_sample_fwd),
                                          whichtoinvert=[False] * len(template_to_sample_fwd))
     phys_sample = df[["x", "y", "z"]].to_numpy()
-    # 3) reoriented(sample) physical -> reoriented array index (loaded zarr affine)
+    # 3) reoriented(sample) physical -> reoriented array index
     idx_reor = _physical_to_index(phys_sample, reoriented_img)
     # 4) undo the registration's orientation (swaps/flips) -> native zarr indices
     reor_shape = np.asarray(reoriented_img.shape, int)
@@ -194,9 +165,8 @@ def transform_ccf_to_sample(verts, ccf_to_template_fwd, template_to_sample_fwd, 
 
 def _plot_overlay(arr, vox, out_png, title):
     """Scatter native-voxel-index points (red) over mid-slices of `arr` (the
-    inverted annotation). imshow plots sl[row=a0 -> y, col=a1 -> x]; the scatter
-    MUST use the SAME mapping (x=a1, y=a0) or the points look squished/offset on
-    any anisotropic slice."""
+    inverted annotation). imshow maps sl[row=a0 -> y, col=a1 -> x]; the scatter
+    uses the same mapping (x=a1, y=a0)."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -207,7 +177,7 @@ def _plot_overlay(arr, vox, out_png, title):
         half = np.array(arr.shape) // 2
         fig, ax = plt.subplots(1, 3, figsize=(12, 6))
         for k in range(3):
-            a0, a1 = [j for j in range(3) if j != k]   # in-plane axes, increasing
+            a0, a1 = [j for j in range(3) if j != k]   # in-plane axes
             sl = np.take(arr, half[k], axis=k)          # shape (len a0, len a1)
             ax[k].imshow(sl, cmap="gray")
             sel = (np.abs(vox[:, k] - half[k]) < 3)
@@ -225,8 +195,8 @@ def _plot_overlay(arr, vox, out_png, title):
 
 
 def qc_overlay(reference_nii, all_verts_um, out_png, native_vox_um):
-    """Top-level mesh QC: warped vertices (native um) over the inverted annotation
-    (native array indices) -> divide by the native voxel size to get voxels."""
+    """Mesh QC overlay: warped vertices (native um) over the inverted annotation
+    (native array indices); divides by the native voxel size to get voxels."""
     arr = ants.image_read(reference_nii).numpy()
     vox = all_verts_um / np.asarray(native_vox_um, float)
     _plot_overlay(arr, vox, out_png,
@@ -234,22 +204,17 @@ def qc_overlay(reference_nii, all_verts_um, out_png, native_vox_um):
                   "VALIDATE: red should track the annotation region boundaries")
 
 
-# ---- Horta-ready export: warped meshes in the fused image's TRUE physical um ----
-# The native step above stores native_um = voxel_index * NOMINAL spacing (the
-# [10.125,13.5,10.125] the registration set_spacing'd onto the loaded grid). That
-# nominal value is NOT the fused image's real resolution: the registration input
-# (fused_ccf_ch.zarr) is a pre-downsampled pyramid, so the loaded grid is physically
-# fused.zarr level 5 (~23.936 um xy), not 10 um. A viewer like HortaCloud places the
-# fused volume by its OWN OME-Zarr scale, so to land the mesh on the image we recover
-# the integer voxel INDEX (divide out the nominal spacing) and re-express it in the
-# fused image's true micrometers: physical = index * level_scale + level_translation,
-# then reorder columns (z,y,x)->(x,y,z) since Horta reads .obj columns as (x,y,z).
-# The pyramid level is AUTO-DETECTED by matching the native grid shape (not hardcoded),
-# so this stays correct if a run registers at a different level.
+# ---- Horta-ready export: warped meshes in the fused image's true physical um ----
+# The native step stores native_um = voxel_index * nominal spacing, which is not
+# the fused image's real resolution (its registration input is a pre-downsampled
+# pyramid). HortaCloud places the fused volume by its own OME-Zarr scale, so this
+# recovers the integer voxel index (divides out the nominal spacing), re-expresses
+# it in the fused image's true micrometers (index * level_scale + level_translation),
+# then reorders columns (z,y,x)->(x,y,z) since Horta reads .obj columns as (x,y,z).
+# The pyramid level is auto-detected by matching the native grid shape.
 def _fused_levels(fused_zarr_path):
     """Read an OME-Zarr group's multiscales[0] -> list of
-    (level_path, shape_zyx, scale_zyx, translation_zyx). Used to map native voxel
-    indices into the fused image's true physical micrometers."""
+    (level_path, shape_zyx, scale_zyx, translation_zyx)."""
     import zarr
     g = zarr.open(fused_zarr_path, mode="r")
     ms = g.attrs["multiscales"][0]
@@ -284,9 +249,8 @@ def to_fused_microns(verts_native_um, native_vox_um, native_shape, fused_levels)
 
 def write_obj_xyz(path, lines, vert_idx, new_xyz):
     """Write an .obj with vertices replaced by new_xyz and any vertex-normal (vn)
-    components reordered (z,y,x)->(x,y,z) to match the column reorder. Faces are kept
-    verbatim -- the validated Horta export reorders columns only, it does not reverse
-    winding (HortaCloud renders the imported surface fine without it)."""
+    components reordered (z,y,x)->(x,y,z) to match the column reorder. Faces are
+    kept verbatim."""
     lines = list(lines)
     for row, i in enumerate(vert_idx):
         x, y, z = new_xyz[row]
@@ -331,26 +295,18 @@ def main():
 
     start = args.start_iso or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    # Affines: CCF (input) frame, and the REORIENTED registration grid the points
-    # land in. The native output frame is recovered by undoing the swaps/flips.
+    # CCF input frame and the reoriented registration grid the points land in.
     ccf_img = ants.image_read(args.ccf_template)
     reoriented_img = ants.image_read(args.reoriented_reference)
 
-    # Same swaps/flips the registration applied, inverted exactly as the annotation
-    # inversion does (register_ccf_annotation.py): flips unchanged, swaps reversed.
+    # Invert the registration's swaps/flips: flips unchanged, swaps reversed.
     swaps, flips = _acquisition_swaps_flips(args.acquisition)
     inv_swaps = [(b, a) for (a, b) in reversed(swaps)]
     inv_flips = flips
     print(f"orientation swaps={swaps} flips={flips} -> inv_swaps={inv_swaps} inv_flips={inv_flips}")
 
-    # ----- CONFIRMED point-transform direction (derived + affine-only-validated) --
-    # reg(fixed=CCF, moving=template) and SyN(fixed=template, moving=sample). For
-    # POINTS, fixed->moving uses each registration's FORWARD transforms
-    # [1Warp, 0GenericAffine] (no inversion). Path C->T->S = reg FORWARD then SyN
-    # FORWARD, two sequential calls. Confirmed: affine-only landed CCF region 362
-    # within 11 voxels of its true location in ccf_anno_in_sample_space (vs
-    # 440-580 vox for every other order/inversion). The run script passes the
-    # FORWARD warps in [1Warp, 0GenericAffine] order.
+    # Forward point-transform chain: reg FORWARD (C->T) then SyN FORWARD (T->S).
+    # The run script passes the forward warps in [1Warp, 0GenericAffine] order.
     ccf_to_template_fwd = list(args.ccf_to_template_transforms)
     template_to_sample_fwd = list(args.template_to_sample_transforms)
     print(f"reg (C->T) FWD: {ccf_to_template_fwd}\nSyN (T->S) FWD: {template_to_sample_fwd}")
@@ -360,10 +316,9 @@ def main():
     out_root = os.path.join(args.output_dir, "ccf_mesh_to_sample")
     os.makedirs(out_root, exist_ok=True)
 
-    # Read every mesh once and concatenate ALL vertices, so the two
-    # apply_transforms_to_points calls (reg, then SyN) load the displacement fields
-    # ONCE for the whole batch. A per-mesh loop over hundreds-thousands of CCF
-    # meshes would reload the warps that many times (minutes -> hours).
+    # Read every mesh once and concatenate all vertices so the two
+    # apply_transforms_to_points calls load the displacement fields once for the
+    # whole batch instead of per mesh.
     meshes, chunks = [], []   # meshes: (rel_path, lines, vert_idx); chunks: (Ni,3) verts
     for obj in objs:
         lines, vidx, verts = read_obj(obj)
@@ -388,10 +343,9 @@ def main():
         offset += n
     print(f"wrote {len(meshes)} warped meshes to {out_root}")
 
-    # ---- Horta-ready copies in the fused image's TRUE physical micrometers --------
-    # RESULTS-ONLY: ccf_obj_to_sample_micron/ is NOT in the upload capsule's
-    # PUBLISH_WHITELIST, so it stays in /results and is never pushed to S3. Skips
-    # silently (non-fatal) if --fused-zarr is absent or its metadata can't be read.
+    # ---- Horta-ready copies in the fused image's true physical micrometers --------
+    # ccf_obj_to_sample_micron/ is results-only (not in the upload whitelist).
+    # Skips silently if --fused-zarr is absent or its metadata can't be read.
     if args.fused_zarr:
         try:
             levels = _fused_levels(args.fused_zarr)
@@ -408,12 +362,12 @@ def main():
         except Exception as exc:
             print(f"Horta-micron export skipped (non-fatal): {exc}")
 
-    # all_out is in native um; ccf_anno_in_sample_space is in native array indices,
-    # so QC divides by the native voxel size to land vertices on the right voxels.
+    # all_out is native um; ccf_anno_in_sample_space is native array indices, so QC
+    # divides by the native voxel size to land vertices on the right voxels.
     qc_overlay(args.reference_image, all_out,
                os.path.join(out_root, "qc", "ccf_mesh_vs_annotation.png"), native_vox_um)
 
-    # metadata record (stdlib helper, vendored in this capsule)
+    # metadata record
     try:
         from aind_process_record import make_data_process, write_data_process
         dp = make_data_process(

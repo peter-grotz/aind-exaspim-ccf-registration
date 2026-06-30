@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 set -ex
 
-# This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
+# Capsule entry point, run on "Reproducible Run".
 
-# App-Panel parameter: use the fused CCF brain mask to restrict registration?
-# Code Ocean passes the capsule's first parameter as $1 (default true). Accepts
-# true/false (also yes/no, 1/0, on/off). A pre-set USE_FUSED_MASK env wins.
+# Whether to use the fused CCF brain mask to restrict registration.
+# Defaults to $1 (true); an existing USE_FUSED_MASK env var takes precedence.
 export USE_FUSED_MASK="${USE_FUSED_MASK:-${1:-true}}"
 echo "USE_FUSED_MASK=${USE_FUSED_MASK}"
 
@@ -15,11 +14,9 @@ sh run_register_ccf_annotation_10um.sh
 
 python -u finalize_registration_metadata.py
 
-# Reverse-transform the CCF region meshes (.obj) into sample space, reusing the
-# transforms produced above. Non-fatal: a failure here must not fail registration.
-# Capture output to a results-only log and surface a tail on failure, so a silent
-# "failed (non-fatal)" is actually diagnosable on the next run instead of hiding
-# the real Python traceback / missing-input message.
+# Reverse-transform CCF region meshes (.obj) into sample space. Non-fatal:
+# a failure here does not fail registration. Output is logged, and the log
+# tail is printed on failure.
 INVERT_LOG="/results/ccf_alignment/registration_metadata/ccf_mesh_invert.log"
 mkdir -p "$(dirname "$INVERT_LOG")"
 if bash run_invert_ccf_objs.sh > "$INVERT_LOG" 2>&1; then

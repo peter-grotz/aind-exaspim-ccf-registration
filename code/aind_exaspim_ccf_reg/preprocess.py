@@ -1,6 +1,5 @@
 """
-Preprocess exaspim data
-Reference: https://github.com/AllenNeuralDynamics/aind-axis-utils/blob/feat-adjust-axes/src/aind_axis_utils/axes.py
+Preprocessing functions for exaspim data.
 """
 
 import logging
@@ -53,7 +52,6 @@ def check_orientation(
         logger.info(f"The first tile file name: {file_name_1st}")
 
         if "tile_000000_ch_" in metadata["tiles"][0]["file_name"]:
-            # beta scope
             logger.info("The input is a Beta scope sample!!")
             ccf_directions = {
                 0: "Anterior_to_posterior",
@@ -82,36 +80,19 @@ def get_adjustments(
     orientation: Dict[int, str]
 ) -> Tuple[List[Tuple[int, int]], List[int]]:
     """
-    Compute the necessary swaps and flips to adjust the orientation of axes.
-
-    This function compares the given axes with a reference orientation and determines
-    the swaps and flips required to match the target orientation.
+    Compute the swaps and flips needed to match axes to a reference orientation.
 
     Parameters
     ----------
     axes : List[Dict[str, Any]]
-        A list of dictionaries containing axis information from the acquisition.json file,
-        where each entry includes the 'dimension' and 'direction' of the axis.
-        Example format:
-        ```
-        [
-            {
-                "name": "X",
-                "dimension": 2,
-                "direction": "Anterior_to_posterior",
-                "unit": "micrometer"
-            }
-        ]
-        ```
+        Axis entries from acquisition.json, each with 'dimension' and 'direction'.
     orientation : Dict[int, str]
-        A dictionary specifying the reference orientation for each axis dimension.
+        Reference orientation for each axis dimension.
 
     Returns
     -------
     Tuple[List[Tuple[int, int]], List[int]]
-        A tuple containing:
-        - swaps: List of tuples where each tuple contains two dimensions to be swapped
-        - flips: List of integers where each integer represents an axis that needs to be flipped
+        (swaps, flips): axis pairs to swap and axes to flip.
     """
     flips = []
     swaps = []
@@ -122,14 +103,13 @@ def get_adjustments(
         direction = ax["direction"].lower()
 
         if orientation[dim].lower() == direction:
-            # No change needed
             continue
 
         for idx, d in orientation.items():
-            # Check if only a swap is needed
+            # Same direction: swap only
             if d.lower() == direction:
                 swaps.append((dim, idx))
-            # Check if flip is needed
+            # Reversed direction: swap and flip
             elif d.lower() == "_".join(direction.split("_")[::-1]):
                 swaps.append((dim, idx))
                 flips.append(idx)
@@ -139,25 +119,21 @@ def get_adjustments(
 
 def adjust_array(arr: np.ndarray, swaps: List[Tuple[int, int]], flips: List[int]) -> np.ndarray:
     """
-    Adjust a NumPy array by performing axis swaps and flips.
-
-    This function reorders the axes of a NumPy array based on the specified
-    swaps, and then flips the array along the specified axes.
+    Reorder and flip array axes.
 
     Parameters
     ----------
     arr : np.ndarray
-        The input NumPy array to be adjusted.
+        Input array.
     swaps : List[Tuple[int, int]]
-        A list of tuples representing the axes to be swapped. Each tuple contains
-        two dimensions to be swapped.
+        Axis pairs to swap.
     flips : List[int]
-        A list of integers representing the axes that should be flipped.
+        Axes to flip.
 
     Returns
     -------
     np.ndarray
-        The adjusted NumPy array after the swaps and flips are applied.
+        Adjusted array.
     """
     if swaps:
         in_axis, out_axis = zip(*swaps)

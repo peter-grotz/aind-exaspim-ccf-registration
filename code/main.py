@@ -1,9 +1,4 @@
-"""
-Main script for exaspim-to-template-to-CCF registration pipeline.
-
-This module contains the main functions for performing CCF (Common Coordinate Framework)
-registration of exaSPIM data to the Allen Mouse Brain Atlas.
-"""
+"""Registration of exaSPIM data to the Allen Mouse Brain CCF, via the exaSPIM template."""
 
 import json
 import logging
@@ -38,17 +33,13 @@ from aind_exaspim_ccf_reg.register import RegistrationPipeline
 from argschema import ArgSchemaParser
 
 __version__ = "0.0.1"
-# Provenance points at the production Code Ocean capsule (AllenNeuralDynamics-owned),
-# which currently holds the running code; switch to the AIND GitHub repo once the code
-# lives there.
+# Code Ocean capsule holding the running code.
 code_url = "https://codeocean.allenneuraldynamics.org/capsule/6898460/tree"
 
 
 def _apply_output_prefix(path: str) -> str:
-    """Test mode: when OUTPUT_PREFIX is set, read the fused image + mask from
-    where the fusion capsule wrote them ({OUTPUT_PREFIX}/<asset>/fusion/...),
-    not the production asset. Acquisition metadata is still read from the
-    original (aind-open-data) path. No effect when OUTPUT_PREFIX is unset."""
+    """Redirect a /fusion/ path to {OUTPUT_PREFIX}/<asset>/fusion/... when
+    OUTPUT_PREFIX is set; return the path unchanged otherwise."""
     prefix = os.environ.get("OUTPUT_PREFIX")
     if not prefix or "/fusion/" not in path:
         return path
@@ -60,9 +51,7 @@ def load_zarr(
     image_path: PathLike, 
     logger: logging.Logger
 ) -> np.ndarray:
-    """
-    Load Zarr image.
-    """
+    """Load an OME-Zarr image as a squeezed numpy array."""
     image = zarr.open(image_path, mode="r")
     image = np.squeeze(np.squeeze(np.array(image), axis=0), axis=0)
     logger.info("----"*10)
@@ -77,34 +66,16 @@ def upload_alignment_data(
     s3_path: str,
     folder_to_upload: PathLike,
 ) -> str:
-    """
-    generate output meta data, processing.json
-    Copies results to the destination bucket to make it available
-    to scientists as soon as possible.
+    """Recursively upload a results folder to an s3:// path.
 
     Parameters
     ----------
     s3_path: str
-        New dataset name where the data will
-        be copied following the aind conventions
-        e.g., s3://{bucket_path}/{new_dataset_name}
-
+        Destination, e.g. s3://{bucket_path}/{new_dataset_name}
     folder_to_upload: PathLike
         Results folder path in Code Ocean
-
-    Returns
-    -------
-    Tuple[str, str]
-        The first position is the path where the dataset
-        was moved. e.g., s3://{bucket_path}/{new_dataset_name}
-        It includes the "s3://" prefix. 
-        e.g., s3://{bucket_path}/{new_dataset_name}/{output_prediction}
     """
 
-    #------------------------------------#
-    # upload alignment results to s3
-    #------------------------------------#
-    # s3_path = f"s3://{bucket_path}/{new_dataset_name}"
     print(f"upload files to path {s3_path}")
 
     fs = s3fs.S3FileSystem()
@@ -121,25 +92,16 @@ def upload_alignment_data(
 
 
 def get_root_s3_prefix(s3_uri, levels_up=1):
-    # Remove 's3://' and split path
+    """Return the s3:// prefix `levels_up` path segments below the bucket root."""
     scheme, bucket_and_key = s3_uri.split('://', 1)
     bucket, *key_parts = bucket_and_key.split('/')
-  
-    # Go `levels_up` directories up from the current file path
+
     base_key = '/'.join(key_parts[:levels_up])
     return f's3://{bucket}/{base_key}/'
 
 def main() -> None:
-    """
-    Main function to run the CCF registration pipeline.
-    
-    This function orchestrates the entire registration process:
-    1. Loads configuration from processing manifest
-    2. Sets up output directories and logging
-    3. Performs registration at the specified resolution level
-    4. Optionally applies transforms to 10um resolution
-    5. Generates processing metadata
-    """
+    """Run the CCF registration pipeline: load config and image, register at
+    25 um, optionally apply transforms at 10 um, and write processing metadata."""
     DATA_FOLDER = os.path.abspath("../data")
     RESULTS_FOLDER = os.path.abspath("../results")
     CCF_FOLDER = os.path.abspath(f"{DATA_FOLDER}/allen_mouse_ccf")
@@ -158,8 +120,7 @@ def main() -> None:
     print(f"processing_manifest_file: {processing_manifest_file}")
 
     dataset_path = str(dataset_config["zarr_multiscale"]["input_uri"])
-    # Where to READ the fused image + mask (test mode redirects to OUTPUT_PREFIX,
-    # where the fusion capsule wrote them; production = the asset path itself).
+    # Path to read the fused image + mask (redirected under OUTPUT_PREFIX in test mode).
     fused_path = _apply_output_prefix(dataset_path)
     level = 3
     resolution = 25
@@ -228,20 +189,11 @@ def main() -> None:
     parser = ArgSchemaParser(schema_type=RegSchema, input_data=example_input)
     pipeline = RegistrationPipeline(logger)
 
-    #-----------------------------------------------#
-    # Load OMEZarr image 
-    #-----------------------------------------------#
-
-    # Import + 25 um atlas alignment are recorded as ONE process: the image load
-    # is folded into the alignment record (start_date_time spans the load), so
-    # there is no separate "Image importing" record.
+    # Load image and register at 25 um, recorded as one process (load folded in).
     start_date_time = datetime.now(timezone.utc)
-    image_path = f"{fused_path.rstrip('/')}/{level}"  # slash-safe: a manifest input_uri without a trailing slash must not yield fused_ccf_ch.zarr<level>
+    image_path = f"{fused_path.rstrip('/')}/{level}"  # rstrip keeps the level a separate path segment
     image = load_zarr(image_path, logger)
 
-    #-----------------------------------------------#
-    # registration
-    #-----------------------------------------------#
     brain_to_exaspim_transform_path = pipeline.register(
         parser=parser,
         zarr_image=image,
@@ -262,12 +214,9 @@ def main() -> None:
                 "level": level,
                 "resolution_um": resolution,
                 "dataset_id": dataset_id,
-                # use_fused_mask = what was REQUESTED (the App-Panel toggle);
-                # mask_applied = what ACTUALLY happened. They differ when the toggle is
-                # on but the fused mask was missing/empty (e.g. mask fusion failed), in
-                # which case registration ran UNMASKED. The fused-mask nii is written
-                # only when the mask is actually multiplied in, so its presence is the
-                # reliable signal.
+                # use_fused_mask = whether the mask was requested (toggle);
+                # mask_applied = whether the mask was actually used (the fused-mask
+                # nii exists only when the mask was multiplied in).
                 "use_fused_mask": os.environ.get("USE_FUSED_MASK", "true").strip().lower()
                                   not in ("0", "false", "no", "off", "none", "skip", "n", "f", ""),
                 "mask_applied": os.path.exists(f"{outprefix}{dataset_id}_fused_mask.nii.gz"),
@@ -280,15 +229,9 @@ def main() -> None:
         )
     )
 
-    # ------------------------------------------------------------------
-    # QC overlay (RESULTS-ONLY): warp the fused brain mask into exaSPIM-
-    # template space via the sample->template transform and overlay it on the
-    # exaSPIM template mask, so we can eyeball whether the mask used to restrict
-    # registration lands on the atlas-defined brain. Written under
-    # ccf_alignment/mask_qc/ -- which matches NONE of the upload capsule's
-    # PUBLISH_WHITELIST globs, so it stays in /results and is never pushed to S3.
-    # Skips silently when no fused mask was used (legacy subjects) or on error.
-    # ------------------------------------------------------------------
+    # QC overlay: warp the fused brain mask into template space and overlay it
+    # on the template mask. Written under ccf_alignment/mask_qc/ (not uploaded
+    # to S3). Skipped when no fused mask is present or on error.
     try:
         fused_mask_nii = f"{outprefix}{dataset_id}_fused_mask.nii.gz"
         template_mask_nii = "../data/exaSPIM_template_mask_25um_otsu.nii.gz"
@@ -296,8 +239,7 @@ def main() -> None:
             from aind_exaspim_ccf_reg.plots import plot_mask_overlay
             tmpl_mask = ants.image_read(template_mask_nii)
             fused_mask = ants.image_read(fused_mask_nii)
-            # transformlist = [warp, affine] is the ANTs fwd convention returned
-            # by register(); nearestNeighbor keeps the warped mask binary.
+            # nearestNeighbor keeps the warped mask binary.
             warped_mask = ants.apply_transforms(
                 fixed=tmpl_mask,
                 moving=fused_mask,
@@ -325,17 +267,11 @@ def main() -> None:
         level = {3: 2, 6: 5}.get(level, level)    
         resolution = 10
 
-        #-----------------------------------------------#
-        # load zarr
-        #-----------------------------------------------#
-        # Import + 10 um atlas alignment recorded as ONE process (import folded in).
+        # Load image and apply transforms at 10 um, recorded as one process.
         start_date_time = datetime.now(timezone.utc)
-        image_path = f"{fused_path.rstrip('/')}/{level}"  # slash-safe: a manifest input_uri without a trailing slash must not yield fused_ccf_ch.zarr<level>
+        image_path = f"{fused_path.rstrip('/')}/{level}"  # rstrip keeps the level a separate path segment
         image = load_zarr(image_path, logger)
 
-        #-----------------------------------------------#
-        # apply transforms to 10um
-        #-----------------------------------------------#
         output_path = pipeline.apply_transforms_to_10um(
             parser=parser,
             zarr_image=image,

@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Emit the CCF-annotation step as a *_data_process.json after it runs.
+"""Write a *_data_process.json describing the CCF-annotation step from its outputs.
 
-main.py writes one *_data_process.json per registration step. The annotation
-step (run_register_ccf_annotation_10um.sh) runs AFTER main.py, so this script
-emits its DataProcess once its outputs exist. The upload capsule's
-aind-metadata-manager collects every *_data_process.json and aggregates them
-into the validated top-level processing.json.
+The annotation step runs after main.py, so this emits its DataProcess once the
+output files exist. The upload capsule later aggregates every *_data_process.json
+into the top-level processing.json.
 """
 
 import json
@@ -18,7 +16,7 @@ from aind_process_record import make_data_process, write_data_process
 
 RESULTS_DIR = Path("../results")
 CCF_ALIGNMENT_DIR = RESULTS_DIR / "ccf_alignment"
-# Production Code Ocean capsule (AllenNeuralDynamics-owned), where the code currently runs.
+# Code Ocean capsule URL recorded in the DataProcess.
 CODE_URL = "https://codeocean.allenneuraldynamics.org/capsule/6898460/tree"
 CODE_NAME = "aind-exaspim-ccf-registration"
 VERSION = "0.0.1"

@@ -1,6 +1,5 @@
 """
-Plot functions for easy and fast visualiztaion of images and
-regsitration results
+Plot functions for visualizing images and registration results.
 """
 
 import matplotlib.pyplot as plt
@@ -92,13 +91,10 @@ def plot_mask_overlay(
     label_a: str = "A",
     label_b: str = "B",
 ) -> Optional[float]:
-    """Overlay two binary masks (assumed on the same grid) in three orthogonal
-    mid-slices and save a PNG for QC.
+    """Overlay two binary masks in three orthogonal mid-slices and save a PNG.
 
-    mask_a is drawn red, mask_b green, so their overlap shows as yellow. A Dice
-    coefficient (2|A n B| / (|A| + |B|)) is computed and shown in the title as a
-    quick quantitative measure of agreement. Returns the Dice score (or None if
-    nothing was written).
+    mask_a is red, mask_b green, overlap yellow. Returns the Dice score, or
+    None if nothing was written.
 
     Parameters
     ----------
@@ -117,7 +113,7 @@ def plot_mask_overlay(
     a = (mask_a.numpy() > 0).astype(np.uint8)
     b = (mask_b.numpy() > 0).astype(np.uint8)
     if a.shape != b.shape:
-        # Different grids -> can't overlay meaningfully; skip rather than guess.
+        # Different grids; cannot overlay.
         return None
 
     inter = float(np.logical_and(a, b).sum())
@@ -132,8 +128,8 @@ def plot_mask_overlay(
     fig, ax = plt.subplots(1, 3, figsize=(12, 6))
     for k, (sa, sb) in enumerate(slabs):
         rgb = np.zeros(sa.shape + (3,), dtype=float)
-        rgb[..., 0] = sa  # red   = mask_a
-        rgb[..., 1] = sb  # green = mask_b  (overlap -> yellow)
+        rgb[..., 0] = sa  # red = mask_a
+        rgb[..., 1] = sb  # green = mask_b
         ax[k].imshow(rgb)
         ax[k].set_axis_off()
 

@@ -1,5 +1,5 @@
 """
-Code to upsample a segmentatation mask
+Upsample a segmentation mask.
 """
 
 import json
@@ -30,31 +30,23 @@ def compute_pyramid(
     chunks: Union[str, Sequence[int], Dict[Hashable, int]] = "auto",
 ) -> List[dask.array.core.Array]:
     """
-    Computes the pyramid levels given an input full resolution image data
+    Compute pyramid levels from full-resolution image data.
 
     Parameters
-    ------------------------
-
+    ----------
     data: dask.array.core.Array
-        Dask array of the image data
-
+        Image data.
     n_lvls: int
-        Number of downsampling levels
-        that will be applied to the original image
-
+        Number of downsampling levels.
     scale_axis: Tuple[int]
-        Scaling applied to each axis
-
+        Scaling applied to each axis.
     chunks: Union[str, Sequence[int], Dict[Hashable, int]]
-        chunksize that will be applied to the multiscales
-        Default: "auto"
+        Chunk size for the multiscales. Default: "auto".
 
     Returns
-    ------------------------
-
-    Tuple[List[dask.array.core.Array], Dict]:
-        List with the downsampled image(s) and dictionary
-        with image metadata
+    -------
+    List[dask.array.core.Array]
+        Downsampled image levels.
     """
 
     pyramid = xarray_multiscale.multiscale(
@@ -187,25 +179,25 @@ def initialize_output_volume(
     output_volume_size: Tuple[int, int, int],
 ) -> zarr.core.Array:
     """
-    Initializes the zarr directory where the
-    volume will be upsampled.
+    Initialize the zarr store for the upsampled volume.
 
-    Inputs
-    ------
+    Parameters
+    ----------
     output_params: Dict
         Parameters to create the zarr storage.
     output_volume_size: Tuple[int]
-        Output volume size for the zarr file.
+        Output volume size.
 
     Returns
     -------
-    Zarr thread-safe datastore initialized on OutputParameters.
+    zarr.core.Array
+        Initialized zarr datastore.
     """
 
-    # Local execution
+    # Local store
     out_group = zarr.open_group(output_params["path"], mode="w")
 
-    # Cloud execuion
+    # S3 store
     if output_params["path"].startswith("s3"):
         s3 = s3fs.S3FileSystem(
             config_kwargs={
@@ -213,8 +205,8 @@ def initialize_output_volume(
                 "s3": {
                     "multipart_threshold": 64
                     * 1024
-                    * 1024,  # 64 MB, avoid multipart upload for small chunks
-                    "max_concurrent_requests": 20,  # Increased from 10 -> 20.
+                    * 1024,  # 64 MB
+                    "max_concurrent_requests": 20,
                 },
                 "retries": {
                     "total_max_attempts": 100,
@@ -259,22 +251,21 @@ def upscale_zarr_with_padding(
     n_workers: Optional[int] = 16,
 ):
     """
-    Upscale a Zarr volume by specified factors in the spatial dimensions (z, y, x)
-    and save to a new Zarr file. Assumes input is in tczyx format with t and c = 1.
-    Adds zero padding if new_shape is provided and differs from calculated shape.
+    Upscale a Zarr volume in the spatial dimensions (z, y, x) and save to a new
+    Zarr file. Assumes tczyx input with t = c = 1; pads with zeros to new_shape.
 
-    Parameters:
+    Parameters
+    ----------
     input_zarr: dask.array.Array
-        Lazy mask
+        Lazy mask.
     output_params: Dict
-        Dictionary with the parameters for the output Zarr file.
+        Parameters for the output Zarr file.
     upscale_factors_zyx: Tuple[int]
-        Tuple of upscale factors for z, y, and x dimensions. Default: (1, 4, 4)
+        Upscale factors for z, y, x. Default: (1, 4, 4).
     new_shape: Optional[Tuple]
-        If provided, the output will be padded to this shape. Default: None
+        If given, pad output to this shape. Default: None.
     n_workers: Optional[int]
-        Optional number of workers for the dask cluster
-
+        Number of workers for the dask cluster.
     """
     t, c = 1, 1
     if len(input_zarr.shape) == 5:
@@ -401,12 +392,12 @@ def upscale_zarr_with_padding_chunked(
     chunk_size_z: int = 32,
 ):
     """
-    Memory-efficient upscaling using chunked processing.
-    
-    Parameters:
-    -----------
+    Memory-efficient upscaling using chunked processing along Z.
+
+    Parameters
+    ----------
     chunk_size_z: int
-        Number of Z slices to process at once. Reduce if still running out of memory.
+        Number of Z slices to process at once.
     """
     
     # Handle input dimensions
@@ -549,25 +540,22 @@ def upscale_mask(
     dest_multiscale: Optional[str] = "0",
 ):
     """
-    Upscales a segmentation mask
+    Upscale a segmentation mask.
 
     Parameters
     ----------
     dataset_path: str
-        Path where the dataset that was used
-        for segmentation is located.
-    segmentation_mask_path: str
-        Path where the segmentation mask is located
+        Path to the dataset used for segmentation.
+    mask_data: np.ndarray
+        Segmentation mask to upscale.
     output_folder: str
-        Path where the upsampled segmentation mask will
-        be stored.
+        Path where the upsampled mask is stored.
+    upscale_factors_zyx: tuple
+        Upscale factors for z, y, x.
     filename: str
-        Filename for the upsampled segmentation mask
+        Filename for the upsampled mask.
     dest_multiscale: Optional[str]
-        Destination multiscale. This is useful to pull
-        metadata. Default: "0"
-    n_workers: Optional[int]
-        Optional number of workers for the dask cluster. Default: 16
+        Multiscale level used to pull metadata. Default: "0".
     """
     output_folder = Path(output_folder)
 
@@ -596,7 +584,7 @@ def upscale_mask(
     image_metadata = utils.parse_zarr_metadata(metadata=image_metadata, multiscale=dest_multiscale)
     image_shape = image_lazy_data.shape
 
-    # Getting list with Z Y X order of the resolution
+    # Resolution in Z, Y, X order
     resolution_zyx = (
         image_metadata["axes"]["z"]["scale"],
         image_metadata["axes"]["y"]["scale"],
@@ -615,7 +603,7 @@ def upscale_mask(
     )
     # image_compressor = image_metadata[".zarray"]["compressor"]
 
-    # Add this check and conversion:
+    # Convert compressor metadata to a numcodecs instance
     if isinstance(image_compressor, dict):
         if image_compressor["id"] == "blosc":
             image_compressor = numcodecs.Blosc(
@@ -625,7 +613,7 @@ def upscale_mask(
                 blocksize=image_compressor.get("blocksize", 0),
             )
         else:
-            # Default fallback if compressor type is unknown
+            # Fallback for unknown compressor type
             image_compressor = numcodecs.Blosc(cname="zstd", clevel=3)
     elif image_compressor is None:
         image_compressor = numcodecs.Blosc(cname="zstd", clevel=3)

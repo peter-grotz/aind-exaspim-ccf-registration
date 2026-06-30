@@ -1,11 +1,10 @@
 """
-Register an exaspim data to the Allen Institute's CCF atlas via the exaspim template
+Register exaSPIM data to the Allen Institute CCF atlas via the exaSPIM template.
 
-Pipeline:
-(1) check orientation and run preprocessing on the given image.
-(2) register the preprocessed brain image to the exaspim template using ANTs rigid and SyN registration.
-(3) register the deformed image from (2) to the CCF Allen Atlas by applying template-to-CCF transforms
-(4) register CCF annotation to brain space
+(1) Check orientation and preprocess the image.
+(2) Register the preprocessed brain image to the exaSPIM template (ANTs rigid + SyN).
+(3) Register the deformed image to the CCF atlas by applying template-to-CCF transforms.
+(4) Register CCF annotation to brain space.
 """
 import gc
 import logging
@@ -51,47 +50,47 @@ logger.setLevel(logging.INFO)
 
 def _fused_mask_enabled() -> bool:
     """Whether to restrict registration with the fused flat-field brain mask.
-    Driven by the USE_FUSED_MASK env var (set by the App-Panel parameter via the
-    run script). Default ON; only explicit no/false/0/off/none/skip disables it."""
+    Driven by the USE_FUSED_MASK env var. Default on; disabled only by an
+    explicit no/false/0/off/none/skip value."""
     v = os.environ.get("USE_FUSED_MASK", "true").strip().lower()
     return v not in ("0", "false", "no", "off", "none", "skip", "n", "f", "")
 
 
 class TemplateLoader:
-    """Loading CCF and exaSPIM templates."""
-    
+    """Loads the CCF and exaSPIM templates."""
+
     def __init__(self, logger: logging.Logger):
         """
         Initialize TemplateLoader.
-        
+
         Parameters
         ----------
         logger : logging.Logger
-            Logger instance for output messages
+            Logger instance.
         """
         self.logger = logger
     
     def load_templates(self, reg_params: dict, outprefix: str) -> Tuple[ants.ANTsImage, ants.ANTsImage]:
         """
-        Load and prepare CCF and exaSPIM templates.
-        
+        Load and prepare the CCF and exaSPIM templates.
+
         Parameters
         ----------
         reg_params : dict
-            Registration parameters containing template paths and scaling
+            Registration parameters with template paths and scaling.
         outprefix : str
-            Output prefix for saving template images
-            
+            Output prefix for saving template images.
+
         Returns
         -------
         Tuple[ants.ANTsImage, ants.ANTsImage]
-            Tuple of (ccf_template, exaspim_template)
+            (ccf_template, exaspim_template).
         """
         scale = reg_params['sample_scale']
         ants_exaspim = ants.image_read(reg_params['exaspim_template_path'])
         ccf = ants.image_read(reg_params['ccf_path'])
         
-        # Normalize CCF
+        # Normalize CCF intensities.
         ccf = perc_normalization(ccf)
         self.logger.info(f"Loaded ccf: {ccf}")
         plot_antsimgs(ccf, 
@@ -101,7 +100,7 @@ class TemplateLoader:
 
         # ants.image_write(ccf, f"{outprefix}load_ccf.nii.gz")
         
-        # set the physical information of exaSPIM template to CCF
+        # Copy CCF physical geometry onto the exaSPIM template.
         ants_exaspim.set_spacing(ccf.spacing)
         ants_exaspim.set_origin(ccf.origin)
         ants_exaspim.set_direction(ccf.direction)
@@ -135,14 +134,14 @@ class ImagePreprocessor:
     def __init__(self, logger: logging.Logger):
         """
         Initialize ImagePreprocessor.
-        
+
         Parameters
         ----------
         logger : logging.Logger
-            Logger instance for output messages
+            Logger instance.
         """
         self.logger = logger
-    
+
     def preprocess_image(
         self,
         acquisition_path: str,
@@ -155,29 +154,29 @@ class ImagePreprocessor:
         level: Optional[int] = None,
     ) -> ants.ANTsImage:
         """
-        Preprocess the input image including orientation checking and normalization.
-        
+        Preprocess the input image: orientation check, normalization, optional
+        masking, and resampling to the template resolution.
+
         Parameters
         ----------
         acquisition_path : str
-            Path to acquisition data
+            Path to acquisition data.
         zarr_image : np.ndarray
-            Input image array
+            Input image array.
         scale : List[float]
-            Scale factors for the image
+            Voxel spacing for the image.
         ants_exaspim : ants.ANTsImage
-            exaSPIM template for alignment
+            exaSPIM template for alignment.
         dataset_id : str
-            Dataset identifier
+            Dataset identifier.
         outprefix : str
-            Output prefix for saving intermediate images
-            
+            Output prefix for saving intermediate images.
+
         Returns
         -------
         ants.ANTsImage
-            Preprocessed ANTs image
+            Preprocessed ANTs image.
         """
-        # Check orientation
         ants_img = check_orientation(acquisition_path, zarr_image, self.logger)
         
         ants_img.set_spacing(scale)
@@ -194,34 +193,20 @@ class ImagePreprocessor:
         self.logger.info(
             f"Intensity normalization completed, execution time: {end_time - start_time} s -- image {ants_img}"
         )
-        # ------------------------------------------------------------------
-        # GOAL 3 (default ON): restrict registration with the flat-field mask the
-        # fusion capsule fused using the SAME transforms as the CCF channel
-        # (fused_mask_ch.zarr). Applied EXACTLY like the previous manual mask:
-        # multiply the mask into the sample image BEFORE resampling. The fused
-        # mask shares the sample's grid at this level, so it aligns directly.
-        # Binarized first (the fused mask has blended UINT16 edges) + written out.
-        #
-        # TOGGLE: the App-Panel parameter sets USE_FUSED_MASK (default "true").
-        # Set it to no/false/0/off to register WITHOUT the fused mask. Skips
-        # gracefully if the toggle is on but no fused mask is present (legacy).
-        # ------------------------------------------------------------------
+        # Optionally restrict registration with the fused flat-field brain mask
+        # (fused_mask_ch.zarr), multiplied into the sample image before resampling.
+        # The fused mask shares the sample's grid at this level, so it aligns
+        # directly. Controlled by USE_FUSED_MASK (default on); skips gracefully if
+        # no fused mask is present.
         if _fused_mask_enabled():
             mask_img = self._load_fused_mask(
                 acquisition_path, dataset_path, level, ants_img
             )
             if mask_img is not None:
                 mask_img = ants.threshold_image(mask_img, 1e-6, 1e12, 1, 0)  # binarize
-                # A failed/partial mask fusion can leave an EMPTY fused_mask_ch.zarr
-                # container (the fusion capsule writes the OME-Zarr metadata BEFORE the
-                # EMR job; if that job fails, the pixels are never filled and missing
-                # chunks read back as zeros). zarr.open then SUCCEEDS, so _load_fused_mask
-                # returns an all-zero mask rather than None -- and multiplying it into the
-                # sample zeroes the whole image, after which ANTs aborts with "Total Mass
-                # of the image was zero". Guard on CONTENT, not just presence: if the
-                # binarized mask has (near-)zero foreground it's unusable, so register
-                # UNMASKED (a mask-fusion failure should degrade, not crash -- the design
-                # already treats the mask as best-effort).
+                # Guard against an empty/degenerate mask: a near-zero foreground
+                # means the mask is unusable, so register unmasked rather than
+                # zeroing the image.
                 mask_arr = mask_img.numpy()
                 fg = float(mask_arr.sum())
                 frac = fg / float(mask_arr.size or 1)
@@ -246,7 +231,7 @@ class ImagePreprocessor:
         plot_antsimgs(ants_img, figpath, title=f"{dataset_id}_loaded_zarr_img", vmin=0, vmax=1.5)
         ants.image_write(ants_img, f"{outprefix}{dataset_id}_loaded_zarr_img.nii.gz")
 
-        # Resample to isotropic resolution
+        # Resample to the template's isotropic resolution.
         self.logger.info(f"Resample OMEZarr image to the resolution of ants_exaspim")
         self.logger.info(f"ants_exaspim: {ants_exaspim}")
         self.logger.info(f"ants_img: {ants_img}")
@@ -267,30 +252,27 @@ class ImagePreprocessor:
         level: Optional[int],
         reference_img: ants.ANTsImage,
     ) -> Optional[ants.ANTsImage]:
-        """Load the fused flat-field mask (fused with the same transforms as the
-        CCF channel) at `level`, in the sample image's geometry. Returns an
-        ANTsImage or None if the mask cannot be located/read.
+        """Load the fused flat-field mask at `level` in the sample image's
+        geometry. Returns an ANTsImage, or None if the mask cannot be found/read.
 
-        The fused mask sits next to the CCF channel in the asset
+        The fused mask is the sibling of the CCF channel
         (fused_ccf_ch.zarr -> fused_mask_ch.zarr) and shares its multiscale grid,
-        so at the same level it is voxel-aligned with the loaded sample image.
+        so at the same level it is voxel-aligned with the sample image.
         """
         if not dataset_path or level is None:
             self.logger.info("No dataset_path/level provided; skipping fused mask.")
             return None
-        # dataset_path is the fused input, e.g. .../fusion/fused_ccf_ch.zarr/ .
-        # The fused mask is its sibling .../fusion/fused_mask_ch.zarr (written by
-        # the fusion capsule with the same transforms). Derive from the parent
-        # so this works whether the input is the CCF channel or the signal.
+        # Derive the mask path from the fused input's parent directory so it works
+        # whether the input is the CCF channel or the signal.
         fusion_dir = dataset_path.rstrip("/").rsplit("/", 1)[0]
         mask_path = f"{fusion_dir}/fused_mask_ch.zarr/{level}"
         try:
             arr = zarr.open(mask_path, mode="r")
             arr = np.squeeze(np.squeeze(np.array(arr), axis=0), axis=0)
-        except Exception as exc:  # mask not present (e.g. legacy subject) -> skip
+        except Exception as exc:  # mask not present -> skip
             self.logger.info(f"Fused mask unavailable at {mask_path} ({exc}); skipping mask.")
             return None
-        # Mirror the sample image's orientation + geometry so the two align.
+        # Match the sample image's orientation and geometry so the two align.
         mask = check_orientation(acquisition_path, arr, self.logger)
         mask.set_spacing(reference_img.spacing)
         mask.set_direction(reference_img.direction)
@@ -305,14 +287,14 @@ class RegistrationProcessor:
     def __init__(self, logger: logging.Logger):
         """
         Initialize RegistrationProcessor.
-        
+
         Parameters
         ----------
         logger : logging.Logger
-            Logger instance for output messages
+            Logger instance.
         """
         self.logger = logger
-    
+
     def perform_affine_registration(
         self,
         fixed: ants.ANTsImage,
@@ -322,25 +304,25 @@ class RegistrationProcessor:
         affine_reg_iterations: List[int]
     ) -> Tuple[ants.ANTsImage, List[str], List[str]]:
         """
-        Perform affine registration between moving and fixed images.
-        
+        Perform affine registration of the moving image to the fixed image.
+
         Parameters
         ----------
         fixed : ants.ANTsImage
-            Fixed (target) image
+            Fixed (target) image.
         moving : ants.ANTsImage
-            Moving (source) image
+            Moving (source) image.
         outprefix : str
-            Output prefix for transform files
+            Output prefix for transform files.
         dataset_id : str
-            Dataset identifier
+            Dataset identifier.
         affine_reg_iterations : List[int]
-            Number of iterations for affine registration
-            
+            Iterations for affine registration.
+
         Returns
         -------
         Tuple[ants.ANTsImage, List[str], List[str]]
-            Tuple of (registered_image, forward_transforms, inverse_transforms)
+            (registered_image, forward_transforms, inverse_transforms).
         """
         start_time = datetime.now()
         registration_params = {
@@ -383,27 +365,27 @@ class RegistrationProcessor:
         syn_reg_iterations: List[int]
     ) -> Tuple[ants.ANTsImage, List[str], List[str]]:
         """
-        Perform SyN registration between moving and fixed images.
-        
+        Perform SyN deformable registration of the moving image to the fixed image.
+
         Parameters
         ----------
         fixed : ants.ANTsImage
-            Fixed (target) image
+            Fixed (target) image.
         moving : ants.ANTsImage
-            Moving (source) image
+            Moving (source) image.
         outprefix : str
-            Output prefix for visualization
+            Output prefix for visualization.
         outprefix_reg : str
-            Output prefix for transform files
+            Output prefix for transform files.
         dataset_id : str
-            Dataset identifier
+            Dataset identifier.
         syn_reg_iterations : List[int]
-            Number of iterations for SyN registration
-            
+            Iterations for SyN registration.
+
         Returns
         -------
         Tuple[ants.ANTsImage, List[str], List[str]]
-            Tuple of (registered_image, forward_transforms, inverse_transforms)
+            (registered_image, forward_transforms, inverse_transforms).
         """
         self.logger.info('Starting Deformable Registration')
         start_time = datetime.now()
@@ -448,25 +430,25 @@ class RegistrationProcessor:
         outprefix: str
     ) -> ants.ANTsImage:
         """
-        Apply transforms to moving image.
-        
+        Apply a list of transforms to the moving image.
+
         Parameters
         ----------
         fixed : ants.ANTsImage
-            Fixed (target) image
+            Fixed (target) image.
         moving : ants.ANTsImage
-            Moving (source) image
+            Moving (source) image.
         transformlist : List[str]
-            List of transform files to apply
+            Transform files to apply.
         task_name : str
-            Name for the task (used in visualization and output)
+            Task name used in visualization and output filenames.
         outprefix : str
-            Output prefix for saving results
-            
+            Output prefix for saving results.
+
         Returns
         -------
         ants.ANTsImage
-            Transformed image
+            Transformed image.
         """
         start_time = datetime.now()
         ants_reg = ants.apply_transforms(
@@ -490,11 +472,11 @@ class RegistrationPipeline:
     def __init__(self, logger: logging.Logger):
         """
         Initialize RegistrationPipeline.
-        
+
         Parameters
         ----------
         logger : logging.Logger
-            Logger instance for output messages
+            Logger instance.
         """
         self.logger = logger
         self.template_loader = TemplateLoader(logger)
@@ -504,24 +486,24 @@ class RegistrationPipeline:
     
     def _get_registration_parameters(self, inputs: dict, level: int) -> dict:
         """
-        Get registration parameters based on the processing level.
-        
+        Return registration parameters for the given processing level.
+
         Parameters
         ----------
         inputs : dict
-            Input configuration dictionary
+            Input configuration.
         level : int
-            Processing level (2, 3, 5, or 6)
-            
+            Processing level (2, 3, 5, or 6).
+
         Returns
         -------
         dict
-            Registration parameters for the specified level
-            
+            Registration parameters for the level.
+
         Raises
         ------
         ValueError
-            If level is not supported
+            If the level is unsupported.
         """
         if level in [6, 3]:
             return inputs['reg_param_25um']
@@ -536,19 +518,19 @@ class RegistrationPipeline:
         zarr_image: np.ndarray,
     ) -> List[str]:
         """
-        Perform registration of zarr image to CCF template using ArgSchemaParser for config.
-        
+        Register the zarr image to the CCF template.
+
         Parameters
         ----------
         parser : ArgSchemaParser
-            Parser containing RegSchema configuration
+            Parser with RegSchema configuration.
         zarr_image : np.ndarray
-            Input image array
-            
+            Input image array.
+
         Returns
         -------
         List[str]
-            List of transform paths for brain to exaSPIM template registration
+            Transform paths for the brain-to-exaSPIM registration.
         """
         self.logger.info(f"Running preprocessing and initial alignment with ants version: {ants.__version__}")
         inputs = parser.args
@@ -560,35 +542,35 @@ class RegistrationPipeline:
         outprefix_reg = inputs['outprefix_reg']
         dataset_id = inputs['dataset_id']
         
-        # Get registration parameters based on level
+        # Registration parameters for this level.
         reg_params = self._get_registration_parameters(inputs, level)
         scale = reg_params['sample_scale']
         affine_reg_iterations = reg_params['affine_reg_iterations']
         syn_reg_iterations = reg_params['syn_reg_iterations']
         
-        # Load templates
+        # Load templates.
         ccf, ants_exaspim = self.template_loader.load_templates(reg_params, outprefix)
-        
-        # Preprocess image (mask-restricted by default — Goal 3)
+
+        # Preprocess image (mask-restricted by default).
         ants_img = self.image_preprocessor.preprocess_image(
             acquisition_path, zarr_image, scale, ants_exaspim, dataset_id, outprefix,
             dataset_path=inputs.get('dataset_path'), level=level,
         )
         ants_img_original = ants_img
 
-        # Perform affine registration
+        # Affine registration.
         ants_reg, _, _ = self.registration_processor.perform_affine_registration(
             ants_exaspim, ants_img, outprefix, dataset_id, affine_reg_iterations
         )
 
-        # Perform SyN registration
+        # SyN registration.
         ants_reg, _, _ = self.registration_processor.perform_syn_registration(
             ants_exaspim, ants_img, outprefix, outprefix_reg, dataset_id, syn_reg_iterations
         )
         
         ants_brain_exaspim = ants_reg
         
-        # Apply registration: ants_img --> exaSPIM
+        # Apply registration: sample -> exaSPIM.
         brain_to_exaspim_transform_warp_path = os.path.abspath(
             f"{outprefix_reg}/{dataset_id}_to_exaSPIM_SyN_1Warp.nii.gz"
         )
@@ -612,7 +594,7 @@ class RegistrationPipeline:
         visualize_reg(ants_img_original, ants_exaspim, ants_brain_exaspim, task_name, outprefix)
         ants.image_write(ants_brain_exaspim, f"{outprefix}{task_name}_moved.nii.gz") 
     
-        # Apply registration: ants_brain_exaspim --> ccf
+        # Apply registration: exaSPIM -> CCF.
         ants_brain_ccf = self.registration_processor.apply_transforms(
             ccf, ants_brain_exaspim, inputs["exaspim_to_ccf_transform_path"],
             f"{dataset_id}_to_ccf", outprefix
@@ -620,7 +602,7 @@ class RegistrationPipeline:
 
         task_name = f"{dataset_id}_to_ccf"
         visualize_reg(ants_brain_exaspim, ccf, ants_brain_ccf, task_name, outprefix)
-        ants.image_write(ants_brain_ccf, f"{outprefix}{task_name}_moved.nii.gz") 
+        ants.image_write(ants_brain_ccf, f"{outprefix}{task_name}_moved.nii.gz")
 
         return brain_to_exaspim_transform_path
 
@@ -632,23 +614,24 @@ class RegistrationPipeline:
         dataset_id: Optional[str] = None
     ) -> str:
         """
-        Apply transforms to 10um resolution data using ArgSchemaParser for config.
-        
+        Apply the brain-to-exaSPIM and exaSPIM-to-CCF transforms to 10um data
+        and write the CCF-aligned result to OME-Zarr.
+
         Parameters
         ----------
         parser : ArgSchemaParser
-            Parser containing RegSchema configuration
+            Parser with RegSchema configuration.
         zarr_image : np.ndarray
-            Input image array
+            Input image array.
         brain_to_exaspim_transform_path : List[str]
-            Transform paths for brain to exaSPIM
+            Transform paths for brain to exaSPIM.
         dataset_id : str, optional
-            Dataset identifier, defaults to parser.inputs['dataset_id']
-            
+            Dataset identifier; defaults to inputs['dataset_id'].
+
         Returns
         -------
         str
-            Output path of the registered image
+            Output path of the registered image.
         """
         inputs = parser.args
 
@@ -662,14 +645,14 @@ class RegistrationPipeline:
         
         self.logger.info(f"Running preprocessing and initial alignment with ants version: {ants.__version__}")
 
-        # Load ccf and exaspim templates using 10um parameters
+        # Use 10um template parameters.
         reg_params = inputs['reg_param_10um']
         scale = reg_params['sample_scale']
-        
-        # Load templates
+
+        # Load templates.
         ccf, ants_exaspim = self.template_loader.load_templates(reg_params, outprefix)
 
-        # Preprocess image (without intensity normalization for 10um)
+        # Orientation check (no intensity normalization at 10um).
         ants_img = check_orientation(acquisition_path, zarr_image, self.logger)
         
         ants_img.set_spacing(scale)
@@ -683,7 +666,7 @@ class RegistrationPipeline:
         ants.image_write(ants_img, f"{outprefix}{dataset_id}_loaded_zarr_img.nii.gz")
         self.logger.info(f"Loaded OMEZarr dataset as antsimg: {ants_img}")
 
-        # Resample to 10um isotropic resolution
+        # Resample to 10um isotropic resolution.
         self.logger.info(f"Resample OMEZarr image to the resolution of ants_exaspim")
         self.logger.info(f"ants_exaspim: {ants_exaspim}")
         self.logger.info(f"ants_img: {ants_img}")
@@ -700,7 +683,7 @@ class RegistrationPipeline:
                       figpath, 
                       title=f"{dataset_id}_resampled_zarr_img")
 
-        # Apply registration: ants_img --> exaSPIM
+        # Apply registration: sample -> exaSPIM.
         tp = dataset_id.replace("_10um", "")
         self.logger.info(f"brain_to_exaspim_transform_path: {brain_to_exaspim_transform_path}")
 
@@ -715,7 +698,7 @@ class RegistrationPipeline:
                      ants_brain_exaspim_perc_norm, task_name, outprefix)
         ants.image_write(ants_brain_exaspim, f"{outprefix}{task_name}_moved.nii.gz") 
 
-        # Apply registration: ants_img --> ccf
+        # Apply registration: exaSPIM -> CCF.
         self.logger.info(f"exaspim_to_ccf_transform_path: {exaspim_to_ccf_transform_path}")
 
         ants_brain_ccf = self.registration_processor.apply_transforms(
@@ -731,7 +714,7 @@ class RegistrationPipeline:
         output_path = f"{outprefix}/{task_name}_moved.nii.gz"
         ants.image_write(ants_brain_ccf, output_path) 
 
-        # Write to zarr
+        # Write the CCF-aligned image to OME-Zarr.
         image_name = "ccf_aligned.zarr"
         
         aligned_image = ants_brain_ccf.numpy()
@@ -776,24 +759,24 @@ class ImageProcessor:
     @staticmethod
     def pad_array_n_d(arr: ArrayLike, dim: int = 5) -> ArrayLike:
         """
-        Pads a dask array to be in a 5D shape.
-        
+        Pad an array up to the given number of dimensions (max 5).
+
         Parameters
         ----------
         arr : ArrayLike
-            Dask/numpy array that contains image data.
+            Dask/numpy image array.
         dim : int
-            Number of dimensions that the array will be padded
-            
+            Target number of dimensions.
+
         Returns
         -------
         ArrayLike
-            Padded dask/numpy array.
-            
+            Padded array.
+
         Raises
         ------
         ValueError
-            If padding more than 5 dimensions is requested.
+            If more than 5 dimensions are requested.
         """
         if dim > 5:
             raise ValueError("Padding more than 5 dimensions is not supported.")
@@ -810,27 +793,27 @@ class ImageProcessor:
         chunks: Union[str, Sequence[int], Dict[Hashable, int]] = "auto",
     ) -> List[dask.array.core.Array]:
         """
-        Computes the pyramid levels given an input full resolution image data.
-        
+        Compute multiscale pyramid levels from full-resolution image data.
+
         Parameters
         ----------
         data : dask.array.core.Array
-            Dask array of the image data
+            Dask array of the image data.
         n_lvls : int
-            Number of downsampling levels that will be applied to the original image
+            Number of downsampling levels.
         scale_axis : Tuple[int]
-            Scaling applied to each axis
+            Scaling applied to each axis.
         chunks : Union[str, Sequence[int], Dict[Hashable, int]]
-            chunksize that will be applied to the multiscales. Default: "auto"
-            
+            Chunk size for the multiscales. Default "auto".
+
         Returns
         -------
         List[dask.array.core.Array]
-            List with the downsampled image(s)
+            Downsampled image(s).
         """
         pyramid = xarray_multiscale.multiscale(
             data,
-            xarray_multiscale.reducers.windowed_mean,  # func
+            xarray_multiscale.reducers.windowed_mean,  # reducer
             scale_axis,  # scale factors
             preserve_dtype=True,
             chunks=chunks,
@@ -841,12 +824,12 @@ class ImageProcessor:
     @staticmethod
     def get_pyramid_metadata() -> dict:
         """
-        Gets pyramid metadata in OMEZarr format.
-        
+        Return the downscaling metadata in OMEZarr format.
+
         Returns
         -------
         dict
-            Dictionary with the downscaling OMEZarr metadata
+            Downscaling OMEZarr metadata.
         """
         return {
             "metadata": {
@@ -855,8 +838,6 @@ class ImageProcessor:
                 "method": "xarray_multiscale.reducers.windowed_mean",
                 "version": str(xarray_multiscale.__version__),
                 "args": "[false]",
-                # No extra parameters were used different
-                # from the orig. array and scales
                 "kwargs": {},
             }
         }
@@ -868,17 +849,17 @@ class ZarrWriter:
     def __init__(self, logger: logging.Logger):
         """
         Initialize ZarrWriter.
-        
+
         Parameters
         ----------
         logger : logging.Logger
-            Logger instance for output messages
+            Logger instance.
         """
         self.logger = logger
         self._setup_dask_config()
-    
+
     def _setup_dask_config(self) -> None:
-        """Configure dask settings for optimal performance."""
+        """Configure dask settings."""
         dask_folder = Path("../scratch")
         dask.config.set({
             "temporary-directory": dask_folder,
@@ -907,22 +888,22 @@ class ZarrWriter:
         params: dict
     ) -> None:
         """
-        Writes array to the OMEZarr format.
+        Write an array to OMEZarr format.
 
         Parameters
         ----------
         img_array : np.array
-            Array with the registered image
+            Registered image array.
         physical_pixel_sizes : List[int]
-            List with the physical pixel sizes. The order must be [Z, Y, X]
+            Physical pixel sizes, ordered [Z, Y, X].
         output_path : PathLike
-            Path where the .zarr image will be written
+            Path where the .zarr image is written.
         image_name : PathLike
-            Image name for the .zarr image
+            Name for the .zarr image.
         opts : dict
-            Dictionary with the storage options for the zarr image
+            Storage options for the zarr image.
         params : dict
-            Dictionary with additional parameters including metadata_folder
+            Additional parameters, including metadata_folder.
         """
         physical_pixels = PhysicalPixelSizes(
             physical_pixel_sizes[0],
@@ -941,12 +922,11 @@ class ZarrWriter:
         pyramid_data = [ImageProcessor.pad_array_n_d(pyramid) for pyramid in pyramid_data]
         self.logger.info(f"Pyramid {pyramid_data}")
 
-        # Writing OMEZarr image
+        # Single-machine cluster; one thread per worker to avoid the GIL.
         n_workers = multiprocessing.cpu_count()
         threads_per_worker = 1
-        # Using 1 thread since is in single machine.
-        # Avoiding the use of multithreaded due to GIL
-        
+
+
         cluster = LocalCluster(
             n_workers=n_workers,
             threads_per_worker=threads_per_worker,

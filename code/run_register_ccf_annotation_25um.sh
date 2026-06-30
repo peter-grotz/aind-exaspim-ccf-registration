@@ -1,13 +1,12 @@
 #!/bin/bash
 
-# Script to run CCF annotation registration
-# This script calls register_ccf_annotation.py with all necessary parameters
+# Run CCF annotation-to-sample registration (25um) via register_ccf_annotation.py.
 
 set -e  # Exit on any error
 
 echo "Starting CCF annotation-to-sample registration..."
 
-# # Dataset information
+# Hardcoded dataset examples (unused).
 # SUBJECTID="720165"
 # DATASET="exaSPIM_720165_2024-07-20_20-55-58_flatfield-correction_2025-03-27_18-48-01_fusion_2025-03-28_01-53-40"
 
@@ -16,7 +15,7 @@ echo "Starting CCF annotation-to-sample registration..."
 # DATASET_PATH="s3://aind-open-data/${DATASET}/fused.zarr"
 
 DATA_FOLDER="../data/"
-# Find the first JSON file in DATA_FOLDER
+# Find the processing manifest JSON in DATA_FOLDER.
 processing_manifest_file=$(find "$DATA_FOLDER" -maxdepth 1 -name "exaspim_manifest*.json" | head -n 1)
 echo "processing_manifest_file: ${processing_manifest_file}"
 
@@ -46,7 +45,7 @@ echo "SUBJECTID: ${SUBJECTID}"
 # Output settings
 SEG_PATH="/results/ccf_alignment/ccf_anno_to_sample/"
 BUCKET_PATH="aind-scratch-data/di.wang"
-LEVEL=3
+LEVEL=3  # zarr multiscale level
 NEW_DATASET_NAME="${DATASET}/ccf_anno_in_sample_space.zarr"
 
 

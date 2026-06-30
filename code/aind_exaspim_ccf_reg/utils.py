@@ -1,8 +1,6 @@
 """
-Utility functions for CCF registration pipeline.
-
-This module contains utility functions for logging, file operations, 
-data processing tracking, and system information.
+Utility functions for the CCF registration pipeline: logging, file
+operations, and system information.
 """
 
 import json
