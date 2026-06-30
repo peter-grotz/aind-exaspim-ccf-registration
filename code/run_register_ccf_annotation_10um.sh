@@ -44,7 +44,6 @@ echo "SUBJECTID: ${SUBJECTID}"
 
 # Output settings
 SEG_PATH="/results/ccf_alignment/ccf_anno_to_sample/"
-BUCKET_PATH="aind-scratch-data/di.wang"
 LEVEL=2  # zarr multiscale level
 NEW_DATASET_NAME="${DATASET}/ccf_anno_in_sample_space.zarr"
 
@@ -103,7 +102,6 @@ python register_ccf_annotation.py \
     --dataset_path "$DATASET_PATH" \
     --level "$LEVEL" \
     --seg_path "$SEG_PATH" \
-    --bucket_path "$BUCKET_PATH" \
     --new_dataset_name "$NEW_DATASET_NAME" \
     --show_visualizations
 

@@ -414,8 +414,6 @@ def main():
     # output settings
     parser.add_argument('--seg_path', default='/results/',
                        help='Path for segmentation output (default: /results/)')
-    parser.add_argument('--bucket_path', default='aind-scratch-data',
-                       help='S3 bucket for upload (default: aind-scratch-data)')
     parser.add_argument('--new_dataset_name', required=True,
                        help='Name for the new dataset in S3')
     

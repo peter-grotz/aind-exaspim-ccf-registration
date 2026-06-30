@@ -37,16 +37,6 @@ __version__ = "0.0.1"
 code_url = "https://codeocean.allenneuraldynamics.org/capsule/6898460/tree"
 
 
-def _apply_output_prefix(path: str) -> str:
-    """Redirect a /fusion/ path to {OUTPUT_PREFIX}/<asset>/fusion/... when
-    OUTPUT_PREFIX is set; return the path unchanged otherwise."""
-    prefix = os.environ.get("OUTPUT_PREFIX")
-    if not prefix or "/fusion/" not in path:
-        return path
-    in_base, rest = path.split("/fusion/", 1)
-    asset = in_base.rstrip("/").split("/")[-1]
-    return f"{prefix.rstrip('/')}/{asset}/fusion/{rest}"
-
 def load_zarr(
     image_path: PathLike, 
     logger: logging.Logger
@@ -120,8 +110,7 @@ def main() -> None:
     print(f"processing_manifest_file: {processing_manifest_file}")
 
     dataset_path = str(dataset_config["zarr_multiscale"]["input_uri"])
-    # Path to read the fused image + mask (redirected under OUTPUT_PREFIX in test mode).
-    fused_path = _apply_output_prefix(dataset_path)
+    fused_path = dataset_path  # read the fused image + mask from the input asset
     level = 3
     resolution = 25
 
@@ -161,7 +150,7 @@ def main() -> None:
         "resolution": resolution,
         "dataset_id": dataset_id,
         "acquisition_output": acquisition_output, 
-        "bucket_path": "aind-scratch-data",
+        "bucket_path": "aind-open-data",
         "outprefix_reg": outprefix_reg,
         "outprefix": outprefix,
         "exaspim_to_ccf_transform_path": exaspim_to_ccf_transform_path,
