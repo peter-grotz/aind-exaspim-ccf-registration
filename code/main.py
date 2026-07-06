@@ -295,8 +295,22 @@ def main() -> None:
     paths = write_data_processes(records, outprefix_reg)
     logger.info(f"Wrote {len(paths)} data_process.json files (upload capsule builds processing.json)")
 
-    end_time = datetime.now(timezone.utc)    
+    end_time = datetime.now(timezone.utc)
     logger.info(f"Finish all steps, execution time: {end_time - start_time} s")
+
+    # Mark the sample CCF-registered in SmartSheet. Skip when no token is set,
+    # and never let a SmartSheet error fail the registration run.
+    token = os.environ.get("SMARTSHEET_TOKEN")
+    if not token:
+        logger.info("SMARTSHEET_TOKEN not set; skipping SmartSheet update.")
+    elif not dataset_id:
+        logger.warning("No dataset id resolved; skipping SmartSheet update.")
+    else:
+        try:
+            update_smartsheet(dataset_id, token)
+            logger.info(f"SmartSheet: marked CCF Registered for {dataset_id}")
+        except Exception as e:
+            logger.warning(f"SmartSheet update failed (non-fatal): {e}")
 
 
     # s3_reg_path = get_root_s3_prefix(dataset_path)
@@ -307,6 +321,29 @@ def main() -> None:
     #     s3_reg_path,
     #     outprefix_reg,
     # )
+
+
+def update_smartsheet(brain_id, access_token):
+    from aind_exaspim_dataset_utils.smartsheet_util import SmartSheetClient
+
+    class PaginatedSmartSheetClient(SmartSheetClient):
+        # list_sheets() returns only the first 100 sheets by default;
+        # include_all=True returns every sheet so the name lookup is reliable.
+        def find_sheet_id(self):
+            response = self.client.Sheets.list_sheets(include_all=True)
+            for sheet in response.data:
+                if sheet.name == self.sheet_name:
+                    return sheet.id
+            raise Exception(f"Sheet Not Found - sheet_name={self.sheet_name}")
+
+    client = PaginatedSmartSheetClient(access_token, "ExM Dataset Summary")
+    column_map = {col.title: col.id for col in client.sheet.columns}
+    row = client.client.models.Row()
+    row.id = client.find_row_id(brain_id)
+    row.cells.append({"column_id": column_map.get("CCF Registered"), "value": True, "strict": False})
+    row.cells.append({"column_id": column_map.get("Affine Registration Date"),
+                      "value": datetime.today().strftime("%m/%d/%Y"), "strict": False})
+    client.client.Sheets.update_rows(client.sheet_id, [row])
 
 
 if __name__ == "__main__":

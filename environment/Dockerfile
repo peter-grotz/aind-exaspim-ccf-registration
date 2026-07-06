@@ -36,5 +36,6 @@ RUN pip install -U --no-cache-dir \
     s3transfer==0.6.2 \
     s3fs==2023.9.2 \
     aiobotocore==2.5.4 \
-    aicsimageio@git+https://github.com/camilolaiton/aicsimageio.git@feature/zarrwriter-multiscales-daskjobs
+    aicsimageio@git+https://github.com/camilolaiton/aicsimageio.git@feature/zarrwriter-multiscales-daskjobs \
+    aind-exaspim-dataset-utils@git+https://github.com/AllenNeuralDynamics/aind-exaspim-dataset-utils.git@main
     
