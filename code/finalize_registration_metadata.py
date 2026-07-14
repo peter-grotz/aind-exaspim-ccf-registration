@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 """Write a *_data_process.json describing the CCF-annotation step from its outputs.
-
-The annotation step runs after main.py, so this emits its DataProcess once the
-output files exist. The upload capsule later aggregates every *_data_process.json
-into the top-level processing.json.
 """
 
 import json

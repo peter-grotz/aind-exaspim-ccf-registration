@@ -205,13 +205,7 @@ def qc_overlay(reference_nii, all_verts_um, out_png, native_vox_um):
 
 
 # ---- Horta-ready export: warped meshes in the fused image's true physical um ----
-# The native step stores native_um = voxel_index * nominal spacing, which is not
-# the fused image's real resolution (its registration input is a pre-downsampled
-# pyramid). HortaCloud places the fused volume by its own OME-Zarr scale, so this
-# recovers the integer voxel index (divides out the nominal spacing), re-expresses
-# it in the fused image's true micrometers (index * level_scale + level_translation),
-# then reorders columns (z,y,x)->(x,y,z) since Horta reads .obj columns as (x,y,z).
-# The pyramid level is auto-detected by matching the native grid shape.
+
 def _fused_levels(fused_zarr_path):
     """Read an OME-Zarr group's multiscales[0] -> list of
     (level_path, shape_zyx, scale_zyx, translation_zyx)."""
