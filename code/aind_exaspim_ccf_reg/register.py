@@ -177,12 +177,14 @@ class ImagePreprocessor:
         ants.ANTsImage
             Preprocessed ANTs image.
         """
-        ants_img = check_orientation(acquisition_path, zarr_image, self.logger)
-        
-        ants_img.set_spacing(scale)
+        # Pass scale into check_orientation so the spacing follows the same axis
+        # swaps as the image; set_spacing on the raw (un-reordered) scale here
+        # would squish the moving image along the anisotropic axis.
+        ants_img = check_orientation(acquisition_path, zarr_image, self.logger, scale=scale)
+
         ants_img.set_direction(ants_exaspim.direction)
         ants_img.set_origin(ants_exaspim.origin)
-        
+
         self.logger.info(f"Loaded OMEZarr dataset as antsimg: {ants_img}")
 
         # Intensity normalization
@@ -652,13 +654,13 @@ class RegistrationPipeline:
         # Load templates.
         ccf, ants_exaspim = self.template_loader.load_templates(reg_params, outprefix)
 
-        # Orientation check (no intensity normalization at 10um).
-        ants_img = check_orientation(acquisition_path, zarr_image, self.logger)
-        
-        ants_img.set_spacing(scale)
+        # Orientation check (no intensity normalization at 10um). Pass scale so
+        # the spacing follows the same axis swaps as the image (see the 25um site).
+        ants_img = check_orientation(acquisition_path, zarr_image, self.logger, scale=scale)
+
         ants_img.set_direction(ants_exaspim.direction)
         ants_img.set_origin(ants_exaspim.origin)
-        
+
         figpath = f"{outprefix}{dataset_id}_loaded_zarr_img"
         plot_antsimgs(perc_normalization(ants_img), 
                       figpath, 

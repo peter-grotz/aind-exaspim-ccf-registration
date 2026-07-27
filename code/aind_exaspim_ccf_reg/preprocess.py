@@ -25,7 +25,8 @@ logger.setLevel(logging.INFO)
 def check_orientation(
     acquisition_path: str, 
     zarr_image: np.ndarray, 
-    logger: logging.Logger
+    logger: logging.Logger,
+    scale: Optional[List[float]] = None,
 ) -> ants.ANTsImage:
     """
     Check and adjust image orientation based on acquisition metadata.
@@ -68,9 +69,18 @@ def check_orientation(
 
     logger.info(f"CCF_DIRECTIONS {ccf_directions}")
     swaps, flips = get_adjustments(metadata['axes'], ccf_directions)
+    swaps = [s for s in swaps if s[0] != s[1]]
     logger.info(f"**swaps {swaps}, flips {flips}**")
     zarr_image = adjust_array(zarr_image, swaps, flips)
-    ants_img = ants.from_numpy(zarr_image.astype(np.float32))    
+    ants_img = ants.from_numpy(zarr_image.astype(np.float32))
+
+    if scale is not None:
+        # Spacing must follow the SAME axis swaps as the image (flips do not
+        # change voxel size), or the anisotropic axis pairs with the wrong
+        # spacing and the moving image is squished.
+        new_scale = reorder_scale(list(scale), swaps)
+        logger.info(f"**scale {list(scale)} -> reordered {new_scale}**")
+        ants_img.set_spacing(new_scale)
 
     return ants_img
 
@@ -141,6 +151,36 @@ def adjust_array(arr: np.ndarray, swaps: List[Tuple[int, int]], flips: List[int]
     if flips:
         arr = np.flip(arr, axis=flips)
     return arr
+
+
+def reorder_scale(scale: List[float], swaps: List[Tuple[int, int]]) -> List[float]:
+    """
+    Apply the SAME axis permutation to a per-axis vector (voxel spacing) that
+    adjust_array's np.moveaxis(swaps) applies to the image, so the spacing stays
+    locked to the reoriented image axes. Swaps only -- flips do not change voxel
+    size. Mirrors the reference capsule's move_columns fix.
+
+    Parameters
+    ----------
+    scale : List[float]
+        Per-axis voxel spacing, in the raw (pre-swap) array axis order.
+    swaps : List[Tuple[int, int]]
+        Axis pairs (from get_adjustments), same list adjust_array uses.
+
+    Returns
+    -------
+    List[float]
+        Spacing reordered to match the reoriented image axes.
+    """
+    swaps = [(i, o) for (i, o) in swaps if i != o]
+    if not swaps:
+        return list(scale)
+    in_axis, out_axis = zip(*swaps)
+    ndim = len(scale)
+    order = [n for n in range(ndim) if n not in in_axis]   # numpy.moveaxis transpose order
+    for dest, src in sorted(zip(out_axis, in_axis)):
+        order.insert(dest, src)
+    return [scale[o] for o in order]
 
 
 def perc_normalization(
