@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import List, Optional
 import argparse
@@ -298,19 +299,11 @@ def main() -> None:
     end_time = datetime.now(timezone.utc)
     logger.info(f"Finish all steps, execution time: {end_time - start_time} s")
 
-    # Mark the sample CCF-registered in SmartSheet. Skip when no token is set,
-    # and never let a SmartSheet error fail the registration run.
-    token = os.environ.get("SMARTSHEET_TOKEN")
-    if not token:
-        logger.info("SMARTSHEET_TOKEN not set; skipping SmartSheet update.")
-    elif not dataset_id:
-        logger.warning("No dataset id resolved; skipping SmartSheet update.")
-    else:
-        try:
-            update_smartsheet(dataset_id, token)
-            logger.info(f"SmartSheet: marked CCF Registered for {dataset_id}")
-        except Exception as e:
-            logger.warning(f"SmartSheet update failed (non-fatal): {e}")
+    # NOTE: the SmartSheet "CCF Registered" write is deliberately NOT done here.
+    # main.py is only the first step of code/run -- the annotation inversion, metadata
+    # finalization and mesh export all run after it. Marking the sheet here would flag
+    # a sample registered while those later steps can still fail. code/run invokes
+    # `main.py --smartsheet-only` as its final step instead.
 
 
     # s3_reg_path = get_root_s3_prefix(dataset_path)
@@ -321,6 +314,31 @@ def main() -> None:
     #     s3_reg_path,
     #     outprefix_reg,
     # )
+
+
+def mark_smartsheet() -> None:
+    """Mark the sample CCF Registered. Run as the LAST step of code/run, once the
+    annotation inversion, metadata finalization and mesh export have all completed.
+
+    The subject id is recovered from the acquisition_<id>.json main() wrote, the same
+    way the shell steps recover it, so all of them agree without re-deriving it from
+    the asset name. Never raises: a SmartSheet problem must not fail a good run.
+    """
+    token = os.environ.get("SMARTSHEET_TOKEN")
+    if not token:
+        print("SMARTSHEET_TOKEN not set; skipping SmartSheet update.")
+        return
+    meta_dir = Path("/results/ccf_alignment/registration_metadata")
+    found = sorted(meta_dir.glob("acquisition_*.json"))
+    dataset_id = found[0].stem[len("acquisition_"):] if found else None
+    if not dataset_id:
+        print(f"no acquisition_<id>.json under {meta_dir}; skipping SmartSheet update.")
+        return
+    try:
+        update_smartsheet(dataset_id, token)
+        print(f"SmartSheet: marked CCF Registered for {dataset_id}")
+    except Exception as e:
+        print(f"SmartSheet update failed (non-fatal): {e}")
 
 
 def update_smartsheet(brain_id, access_token):
@@ -347,7 +365,12 @@ def update_smartsheet(brain_id, access_token):
 
 
 if __name__ == "__main__":
-    main()
+    # --smartsheet-only marks the sheet and exits; code/run calls it last so the
+    # sample is only flagged registered once every step has succeeded.
+    if "--smartsheet-only" in sys.argv:
+        mark_smartsheet()
+    else:
+        main()
 
     # parser = argparse.ArgumentParser(description='CCF registration')
     # parser.add_argument('dataset_path', help='S3 path to the ccf channel fusion')

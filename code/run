@@ -25,3 +25,8 @@ else
     echo "CCF obj inversion failed (non-fatal) -- tail of ccf_mesh_invert.log:"
     tail -n 30 "$INVERT_LOG" || true
 fi
+
+# Mark the sample CCF Registered in SmartSheet -- LAST, so the sheet only reflects a
+# run where registration, annotation inversion and mesh export all completed. Skips
+# itself when SMARTSHEET_TOKEN is unset, and never fails the run.
+python -u main.py --smartsheet-only || echo "SmartSheet update failed (non-fatal)"
