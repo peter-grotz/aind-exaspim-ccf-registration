@@ -31,8 +31,18 @@ DATASET_PATH=$(
 echo "DATASET_PATH: ${DATASET_PATH}"
 
 
-SUBJECTID=$(echo "${DATASET_PATH}" \
-  | grep -oP 'exaSPIM_\K[0-9]+')
+# Subject id, matching the names main.py used for its outputs. Recovered from the
+# acquisition_<id>.json main.py wrote; falls back to the asset name, where the
+# platform prefix is optional (dropped in aind-data-schema v2).
+META_DIR="/results/ccf_alignment/registration_metadata"
+ACQ_JSON=$(ls "${META_DIR}"/acquisition_*.json 2>/dev/null | head -n 1)
+if [ -n "$ACQ_JSON" ]; then
+  SUBJECTID=$(basename "$ACQ_JSON" .json)
+  SUBJECTID="${SUBJECTID#acquisition_}"
+else
+  SUBJECTID=$(echo "${DATASET_PATH}" \
+    | grep -oP '(?<![0-9])[0-9]{6}(?=_\d{4}-\d{2}-\d{2})' | head -n 1 || true)
+fi
 echo "SUBJECTID: ${SUBJECTID}"
 
 

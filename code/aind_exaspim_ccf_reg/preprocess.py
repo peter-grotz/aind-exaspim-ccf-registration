@@ -22,9 +22,49 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def acquisition_images(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Per-tile image entries, from either acquisition schema.
+
+    aind-data-schema v1 lists them at acquisition["tiles"]; v2 moved them to
+    data_streams[].configurations[<Imaging config>].images ("Image spim" entries).
+    Both carry "file_name", which is all the scope check below needs.
+    """
+    if metadata.get("tiles"):
+        return metadata["tiles"]
+    for stream in metadata.get("data_streams") or []:
+        for config in stream.get("configurations") or []:
+            if config.get("images"):
+                return config["images"]
+    return []
+
+
+def normalize_acquisition_axes(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Axis entries as [{"dimension": int, "direction": str}], from either schema.
+
+    v1 lists them at acquisition["axes"] with an explicit "dimension" per axis.
+    v2 moved them to coordinate_system.axes and dropped "dimension" -- there the
+    list position carries it, and v2 orders the axes Z, Y, X, which matches the v1
+    dimension numbering (Z=0, Y=1, X=2) and the (z, y, x) array order.
+
+    Returned in descending-dimension order (X, Y, Z). get_adjustments appends
+    swaps in iteration order and adjust_array applies them sequentially, so the
+    order is part of the result, not just presentation -- v2 lists the axes
+    reversed relative to v1, and emitting that order directly would feed
+    get_adjustments a different swap sequence for the same orientation. Every v1
+    acquisition observed already lists them descending, so this is a no-op there.
+    """
+    axes = metadata.get("axes")
+    if axes:
+        normalized = [{"dimension": a["dimension"], "direction": a["direction"]} for a in axes]
+    else:
+        cs_axes = (metadata.get("coordinate_system") or {}).get("axes") or []
+        normalized = [{"dimension": i, "direction": a["direction"]} for i, a in enumerate(cs_axes)]
+    return sorted(normalized, key=lambda a: a["dimension"], reverse=True)
+
+
 def check_orientation(
-    acquisition_path: str, 
-    zarr_image: np.ndarray, 
+    acquisition_path: str,
+    zarr_image: np.ndarray,
     logger: logging.Logger,
     scale: Optional[List[float]] = None,
 ) -> ants.ANTsImage:
@@ -48,27 +88,40 @@ def check_orientation(
     logger.info("Starting check orientation ......")
     
     with open(acquisition_path, "r") as f:
-        metadata = json.load(f)  
-        file_name_1st = metadata["tiles"][0]["file_name"]
-        logger.info(f"The first tile file name: {file_name_1st}")
+        metadata = json.load(f)
 
-        if "tile_000000_ch_" in metadata["tiles"][0]["file_name"]:
-            logger.info("The input is a Beta scope sample!!")
-            ccf_directions = {
-                0: "Anterior_to_posterior",
-                1: "Superior_to_inferior",
-                2: "Left_to_right",
-            }
-        else:
-            logger.info("The input is a Alpha scope sample!!")
-            ccf_directions = {
-                0: "Posterior_to_anterior",
-                1: "Inferior_to_superior",
-                2: "Left_to_right",
-            }
+    logger.info(f"acquisition schema_version: {metadata.get('schema_version')}")
+    images = acquisition_images(metadata)
+    if not images:
+        raise ValueError(
+            f"no tile/image entries in {acquisition_path} "
+            f"(schema_version={metadata.get('schema_version')})")
+    file_name_1st = images[0]["file_name"]
+    logger.info(f"The first tile file name: {file_name_1st}")
+
+    if "tile_000000_ch_" in file_name_1st:
+        logger.info("The input is a Beta scope sample!!")
+        ccf_directions = {
+            0: "Anterior_to_posterior",
+            1: "Superior_to_inferior",
+            2: "Left_to_right",
+        }
+    else:
+        logger.info("The input is a Alpha scope sample!!")
+        ccf_directions = {
+            0: "Posterior_to_anterior",
+            1: "Inferior_to_superior",
+            2: "Left_to_right",
+        }
 
     logger.info(f"CCF_DIRECTIONS {ccf_directions}")
-    swaps, flips = get_adjustments(metadata['axes'], ccf_directions)
+    axes = normalize_acquisition_axes(metadata)
+    if not axes:
+        raise ValueError(
+            f"no axis entries in {acquisition_path} "
+            f"(schema_version={metadata.get('schema_version')})")
+    logger.info(f"normalized axes: {axes}")
+    swaps, flips = get_adjustments(axes, ccf_directions)
     swaps = [s for s in swaps if s[0] != s[1]]
     logger.info(f"**swaps {swaps}, flips {flips}**")
     zarr_image = adjust_array(zarr_image, swaps, flips)

@@ -8,7 +8,17 @@ echo "Starting CCF obj-mesh -> sample-space inversion..."
 DATA_FOLDER="../data/"
 processing_manifest_file=$(find "$DATA_FOLDER" -maxdepth 1 -name "exaspim_manifest*.json" | head -n 1)
 DATASET_PATH=$(awk -F'"' '/"zarr_multiscale"/{b=1} b&&/"input_uri"/{print $4;exit} b&&/}/{b=0}' "$processing_manifest_file")
-SUBJECTID=$(echo "${DATASET_PATH}" | grep -oP 'exaSPIM_\K[0-9]+')
+# Subject id, matching the names main.py used for the transforms read below.
+# Recovered from the acquisition_<id>.json main.py wrote; falls back to the asset
+# name, where the platform prefix is optional (dropped in aind-data-schema v2).
+ACQ_JSON=$(ls /results/ccf_alignment/registration_metadata/acquisition_*.json 2>/dev/null | head -n 1)
+if [ -n "$ACQ_JSON" ]; then
+  SUBJECTID=$(basename "$ACQ_JSON" .json)
+  SUBJECTID="${SUBJECTID#acquisition_}"
+else
+  SUBJECTID=$(echo "${DATASET_PATH}" \
+    | grep -oP '(?<![0-9])[0-9]{6}(?=_\d{4}-\d{2}-\d{2})' | head -n 1 || true)
+fi
 # Viewer target for the micron mesh export: rewrite fused_ccf_ch.zarr to the
 # sibling fused.zarr that HortaCloud loads. sed leaves DATASET_PATH unchanged
 # if it doesn't match.

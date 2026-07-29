@@ -26,22 +26,53 @@ PIPELINE_NAME = "aind-exaspim-ccf-registration"
 PIPELINE_URL = "https://codeocean.allenneuraldynamics.org/capsule/1087961/tree"
 
 
+def _asset_base(s3_path: str) -> Optional[str]:
+    """s3://bucket/<asset>/... -> s3://bucket/<asset> (no trailing slash)."""
+    m = re.match(r"(s3://[^/]+/[^/]+)", s3_path)
+    return m.group(1) if m else None
+
+
+def _subject_id_from_path(s3_path: str) -> Optional[str]:
+    """Six-digit subject id from an asset name, with or without a platform prefix.
+
+    Asset names dropped the "exaSPIM_" prefix when aind-data-schema went to v2
+    (v2 removed data_description.platform), so the prefix is optional here and the
+    match is anchored on the acquisition datestamp that follows the subject id.
+    """
+    m = re.search(r"(?:^|/)(?:[A-Za-z][A-Za-z0-9]*_)?(\d{6})_\d{4}-\d{2}-\d{2}", s3_path)
+    return m.group(1) if m else None
+
+
 def extract_dataset_id(s3_path: str) -> Optional[str]:
     """
-    Extract dataset ID from S3 path.
-    
+    Subject ID for the dataset at `s3_path`.
+
+    Prefers data_description.json["subject_id"], which is present and carries the
+    same value in both aind-data-schema v1 and v2, over parsing it out of the asset
+    name -- the name lost its "exaSPIM_" prefix in v2. Falls back to the path when
+    that document cannot be read. Read-only; never raises.
+
     Parameters
     ----------
     s3_path : str
         S3 path containing dataset information
-        
+
     Returns
     -------
     Optional[str]
-        Extracted dataset ID or None if not found
+        Subject ID, or None if neither source yields one
     """
-    match = re.search(r"exaSPIM_(\d{6})_", s3_path)
-    return match.group(1) if match else None
+    base = _asset_base(s3_path)
+    if base:
+        try:
+            fs = s3fs.S3FileSystem(anon=True)
+            with fs.open(f"{base}/data_description.json", "rb") as handle:
+                subject_id = json.load(handle).get("subject_id")
+            if subject_id:
+                return str(subject_id)
+        except Exception:
+            pass  # unreadable/absent: fall through to the path-derived id
+    return _subject_id_from_path(s3_path)
 
 
 def get_available_memory() -> float:
@@ -127,10 +158,20 @@ def read_json_as_dict(filepath: str) -> dict:
 
 def parse_s3_path(dataset_path: str) -> str:
     """
-    Parse S3 path to extract dataset information.
+    Raw-asset prefix (s3://bucket/<asset>) for a processed dataset path.
+
+    A processed asset is named "<raw asset>_processed_<timestamp>", so cutting at
+    "_processed_" gives the raw asset -- which is where acquisition.json is read
+    from. Cutting on that literal rather than counting underscore-delimited
+    segments: asset names lost their "exaSPIM_" prefix in aind-data-schema v2,
+    which shifted the segment count so the old pattern captured a trailing
+    "_processed" and produced a prefix that does not exist.
     """
-    m = re.search("(s3:\/\/.+?\/.+?_.+?_(.+?_.+?))_.*", dataset_path)
-    return m.group(1)
+    base = _asset_base(dataset_path)
+    if base:
+        return base.split("_processed_")[0]
+    m = re.search(r"(s3:\/\/.+?\/.+?_.+?_(.+?_.+?))_.*", dataset_path)
+    return m.group(1) if m else dataset_path
 
 
 def download_file(s3path: str, lpath: str) -> None:
