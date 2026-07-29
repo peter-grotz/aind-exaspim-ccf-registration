@@ -24,7 +24,12 @@ import zarr
 from dask.distributed import Client, LocalCluster
 from urllib.parse import urlparse
 
-from aind_exaspim_ccf_reg.preprocess import get_adjustments, adjust_array
+from aind_exaspim_ccf_reg.preprocess import (
+    get_adjustments,
+    adjust_array,
+    acquisition_images,
+    normalize_acquisition_axes,
+)
 from aind_exaspim_ccf_reg.utils import create_logger, create_folder, read_json_as_dict
 from aind_exaspim_ccf_reg.register import ZarrWriter
 
@@ -424,8 +429,10 @@ def main():
     args = parser.parse_args()
     logger = create_logger(output_log_path=args.seg_path)
     
-    if "/" == args.dataset_path[-1]:
-        dataset_path = args.dataset_path[:-1]
+    # rstrip rather than an `if`: the old form only bound dataset_path when the path
+    # ended in "/", so any input without a trailing slash raised UnboundLocalError on
+    # the next line. Matches main.py, which is already slash-safe.
+    dataset_path = args.dataset_path.rstrip("/")
     logger.info(f"dataset_path: {dataset_path}")
     
     image_metadata = utils.load_json(data_path=dataset_path, keyname=".zattrs")
@@ -508,20 +515,32 @@ def main():
     # read acquisition metadata to derive axis swaps/flips
     with open(args.acquisition_path, "r") as f:
         metadata = json.load(f)
-        if "tile_000000_ch_" in metadata["tiles"][0]["file_name"]:
-            ccf_directions = {
-                0: "Anterior_to_posterior",
-                1: "Superior_to_inferior",
-                2: "Left_to_right",
-            }
-        else:
-            ccf_directions = {
-                0: "Posterior_to_anterior",
-                1: "Inferior_to_superior",
-                2: "Left_to_right",
-            }
-    
-    swaps, flips = get_adjustments(metadata['axes'], ccf_directions)
+
+    # Read through the schema adapters, not the raw keys: aind-data-schema v2 moved
+    # the tile list under data_streams and the axes under coordinate_system, and
+    # dropped the per-axis "dimension". normalize_acquisition_axes also canonicalizes
+    # the axis ORDER -- get_adjustments builds the swap list in iteration order, so
+    # this must see the same order check_orientation saw on the forward pass or the
+    # reverse below undoes a different permutation than was applied.
+    images = acquisition_images(metadata)
+    if not images:
+        raise ValueError(
+            f"no tile/image entries in {args.acquisition_path} "
+            f"(schema_version={metadata.get('schema_version')})")
+    if "tile_000000_ch_" in images[0]["file_name"]:
+        ccf_directions = {
+            0: "Anterior_to_posterior",
+            1: "Superior_to_inferior",
+            2: "Left_to_right",
+        }
+    else:
+        ccf_directions = {
+            0: "Posterior_to_anterior",
+            1: "Inferior_to_superior",
+            2: "Left_to_right",
+        }
+
+    swaps, flips = get_adjustments(normalize_acquisition_axes(metadata), ccf_directions)
     logger.info(f"Original swaps: {swaps}, flips: {flips}")
     
     # invert the swaps and flips

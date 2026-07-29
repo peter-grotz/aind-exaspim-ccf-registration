@@ -40,7 +40,11 @@ except Exception:
 
 # Used to derive the same swaps/flips the registration applied, so they can be
 # undone on the points.
-from aind_exaspim_ccf_reg.preprocess import get_adjustments
+from aind_exaspim_ccf_reg.preprocess import (
+    get_adjustments,
+    acquisition_images,
+    normalize_acquisition_axes,
+)
 
 
 # --- .obj I/O: transform only "v" (vertex) lines, keep everything else ---
@@ -94,12 +98,20 @@ def _acquisition_swaps_flips(acquisition_path):
     metadata and the beta/alpha-scope direction map."""
     with open(acquisition_path, "r") as f:
         metadata = json.load(f)
-    first_tile = metadata["tiles"][0]["file_name"]
-    if "tile_000000_ch_" in first_tile:  # beta scope
+    # Via the schema adapters: v2 moved the tile list under data_streams and the axes
+    # under coordinate_system. normalize_acquisition_axes also fixes the axis order,
+    # which get_adjustments is sensitive to -- these swaps must match the forward pass
+    # exactly, since the caller inverts them to map points back to native space.
+    images = acquisition_images(metadata)
+    if not images:
+        raise ValueError(
+            f"no tile/image entries in {acquisition_path} "
+            f"(schema_version={metadata.get('schema_version')})")
+    if "tile_000000_ch_" in images[0]["file_name"]:  # beta scope
         ccf_directions = {0: "Anterior_to_posterior", 1: "Superior_to_inferior", 2: "Left_to_right"}
     else:                                # alpha scope
         ccf_directions = {0: "Posterior_to_anterior", 1: "Inferior_to_superior", 2: "Left_to_right"}
-    return get_adjustments(metadata["axes"], ccf_directions)
+    return get_adjustments(normalize_acquisition_axes(metadata), ccf_directions)
 
 
 def _moveaxis_order(ndim, source, destination):
