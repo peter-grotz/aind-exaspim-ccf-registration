@@ -38,8 +38,32 @@ __version__ = "0.0.1"
 code_url = "https://codeocean.allenneuraldynamics.org/capsule/6898460/tree"
 
 
+def log_scale_vs_zarr(logger, fused_path: str, level: int, sample_scale) -> None:
+    """Log the configured sample_scale beside the voxel size the zarr records, both in
+    um, with each normalised by its smallest axis so the anisotropy is comparable.
+    sample_scale carries a deliberate uniform factor, so only the shape should match."""
+    def shape_of(v):
+        m = min(v)
+        return [round(x / m, 4) for x in v]
+
+    cfg_um = [round(v * 1000.0, 4) for v in sample_scale]
+    try:
+        ms = zarr.open(fused_path.rstrip("/"), mode="r").attrs["multiscales"][0]
+        ds = next(d for d in ms["datasets"] if str(d["path"]) == str(level))
+        zarr_um = [float(v) for v in
+                   next(t["scale"] for t in ds["coordinateTransformations"]
+                        if t["type"] == "scale")[-3:]]
+    except Exception as e:
+        logger.info(f"scale check (level {level}): sample_scale {cfg_um} um "
+                    f"(anisotropy {shape_of(cfg_um)}) | zarr scale unavailable ({e})")
+        return
+    logger.info(f"scale check (level {level}): sample_scale {cfg_um} um "
+                f"(anisotropy {shape_of(cfg_um)}) | zarr {zarr_um} um "
+                f"(anisotropy {shape_of(zarr_um)})")
+
+
 def load_zarr(
-    image_path: PathLike, 
+    image_path: PathLike,
     logger: logging.Logger
 ) -> np.ndarray:
     """Load an OME-Zarr image as a squeezed numpy array."""
@@ -156,14 +180,16 @@ def main() -> None:
         "outprefix": outprefix,
         "exaspim_to_ccf_transform_path": exaspim_to_ccf_transform_path,
         "reg_param_25um": {
-            "sample_scale": [i/1000.0 for i in [20.25, 20.25, 27]],
+            # (z, y, x) to match the squeezed array; coarse axis first.
+            "sample_scale": [i/1000.0 for i in [27, 20.25, 20.25]],
             "exaspim_template_path": "../data/exaSPIM_template_25um/exaspim_template_7sujects_nomask_25um_round6.nii.gz",
             "ccf_path": '../data/allen_mouse_ccf/average_template/average_template_25.nii.gz',
             "affine_reg_iterations": [200, 100, 25, 3],
             "syn_reg_iterations": [200, 100, 25, 3],
         },
         "reg_param_10um": {
-            "sample_scale": [i/1000.0 for i in [10.125, 10.125, 13.5]],
+            # (z, y, x) to match the squeezed array; coarse axis first.
+            "sample_scale": [i/1000.0 for i in [13.5, 10.125, 10.125]],
             "exaspim_template_path": "../data/exaspim_template_7subjects_nomask_10um_round6_template_only/fixed_median.nii.gz",
             "ccf_path": '../data/allen_mouse_ccf/average_template/average_template_10.nii.gz',
             "affine_reg_iterations": [300, 200, 50, 0],
@@ -183,6 +209,7 @@ def main() -> None:
     start_date_time = datetime.now(timezone.utc)
     image_path = f"{fused_path.rstrip('/')}/{level}"  # rstrip keeps the level a separate path segment
     image = load_zarr(image_path, logger)
+    log_scale_vs_zarr(logger, fused_path, level, example_input["reg_param_25um"]["sample_scale"])
 
     brain_to_exaspim_transform_path = pipeline.register(
         parser=parser,
@@ -261,6 +288,7 @@ def main() -> None:
         start_date_time = datetime.now(timezone.utc)
         image_path = f"{fused_path.rstrip('/')}/{level}"  # rstrip keeps the level a separate path segment
         image = load_zarr(image_path, logger)
+        log_scale_vs_zarr(logger, fused_path, level, example_input["reg_param_10um"]["sample_scale"])
 
         output_path = pipeline.apply_transforms_to_10um(
             parser=parser,
