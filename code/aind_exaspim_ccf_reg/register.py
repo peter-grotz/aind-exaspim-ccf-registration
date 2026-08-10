@@ -212,7 +212,16 @@ class ImagePreprocessor:
                 mask_arr = mask_img.numpy()
                 fg = float(mask_arr.sum())
                 frac = fg / float(mask_arr.size or 1)
-                if frac < 0.005:  # a real brain mask covers far more than 0.5% of the volume
+                if tuple(mask_img.shape) != tuple(ants_img.shape):
+                    # The mask multiplies into the sample, so a different grid is not
+                    # recoverable here: the offset between them is not knowable from the
+                    # arrays alone. Register unmasked and let the mask fusion's own
+                    # grid-parity check be what fails.
+                    self.logger.info(
+                        f"USE_FUSED_MASK on, but the fused mask grid {tuple(mask_img.shape)} "
+                        f"does not match the sample {tuple(ants_img.shape)} -- the mask was "
+                        f"fused onto a different grid. Registering UNMASKED.")
+                elif frac < 0.005:  # a real brain mask covers far more than 0.5% of the volume
                     self.logger.info(
                         f"USE_FUSED_MASK on, but the fused mask is empty/degenerate "
                         f"(foreground {fg:.0f} vox = {frac:.4%}) -- the mask fusion likely "
