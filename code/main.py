@@ -156,8 +156,8 @@ def main() -> None:
     logger.info(dataset_path)
 
     exaspim_to_ccf_transform_path = [
-        os.path.abspath("/data/reg_exaspim_template_to_ccf_25um_v1.4/1Warp.nii.gz"),
-        os.path.abspath("/data/reg_exaspim_template_to_ccf_25um_v1.4/0GenericAffine.mat")
+        os.path.abspath("/data/reg_exaspim_template_to_ccf_25um_v1.5/1Warp.nii.gz"),
+        os.path.abspath("/data/reg_exaspim_template_to_ccf_25um_v1.5/0GenericAffine.mat")
     ]
     
     logger.info(f"Starting processing for sample {dataset_id}")
