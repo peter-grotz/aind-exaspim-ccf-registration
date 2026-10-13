@@ -38,27 +38,55 @@ def acquisition_images(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
+def _coordinate_system_axes(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The first populated coordinate system in an aind-data-schema v2 acquisition.
+
+    The key moved as the schema evolved: 2.0 put it at coordinate_system, 2.5 left
+    that null and added global_coordinate_system, with the same axes also repeated
+    on the imaging config as local_coordinate_system. Observed identical wherever
+    more than one is present, so take whichever is populated.
+    """
+    for key in ("coordinate_system", "global_coordinate_system"):
+        cs = metadata.get(key)
+        if isinstance(cs, dict) and cs.get("axes"):
+            return cs["axes"]
+    for stream in metadata.get("data_streams") or []:
+        for config in stream.get("configurations") or []:
+            for key in ("coordinate_system", "local_coordinate_system"):
+                cs = config.get(key)
+                if isinstance(cs, dict) and cs.get("axes"):
+                    return cs["axes"]
+    return []
+
+
+# Array axis order is (z, y, x), which is the dimension numbering v1 states outright.
+AXIS_NAME_TO_DIMENSION = {"Z": 0, "Y": 1, "X": 2}
+
+
 def normalize_acquisition_axes(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Axis entries as [{"dimension": int, "direction": str}], from either schema.
 
     v1 lists them at acquisition["axes"] with an explicit "dimension" per axis.
-    v2 moved them to coordinate_system.axes and dropped "dimension" -- there the
-    list position carries it, and v2 orders the axes Z, Y, X, which matches the v1
-    dimension numbering (Z=0, Y=1, X=2) and the (z, y, x) array order.
+    v2 moved them into a coordinate system and dropped "dimension"; each axis
+    instead carries a "name" of Z, Y or X, which maps to the same numbering. Fall
+    back to list position only for an axis with no usable name.
 
-    Returned in descending-dimension order (X, Y, Z). get_adjustments appends
-    swaps in iteration order and adjust_array applies them sequentially, so the
-    order is part of the result, not just presentation -- v2 lists the axes
-    reversed relative to v1, and emitting that order directly would feed
-    get_adjustments a different swap sequence for the same orientation. Every v1
-    acquisition observed already lists them descending, so this is a no-op there.
+    Returned in descending-dimension order (X, Y, Z). get_adjustments appends swaps
+    in iteration order and adjust_array applies them sequentially, so the order is
+    part of the result, not just presentation -- v2 lists the axes reversed relative
+    to v1, and emitting that order directly would feed get_adjustments a different
+    swap sequence for the same orientation. Every v1 acquisition observed already
+    lists them descending, so this is a no-op there.
     """
     axes = metadata.get("axes")
     if axes:
         normalized = [{"dimension": a["dimension"], "direction": a["direction"]} for a in axes]
     else:
-        cs_axes = (metadata.get("coordinate_system") or {}).get("axes") or []
-        normalized = [{"dimension": i, "direction": a["direction"]} for i, a in enumerate(cs_axes)]
+        normalized = [
+            {"dimension": AXIS_NAME_TO_DIMENSION.get((a.get("name") or "").upper().strip(), i),
+             "direction": a["direction"]}
+            for i, a in enumerate(_coordinate_system_axes(metadata))
+        ]
     return sorted(normalized, key=lambda a: a["dimension"], reverse=True)
 
 
