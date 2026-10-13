@@ -155,9 +155,13 @@ def main() -> None:
     logger.info(f"Processing dataset: {dataset_id}, level={level}, resolution={resolution}um - Output dir: {outprefix} - Config: {dataset_config}")
     logger.info(dataset_path)
 
+    # Shared with the annotation and mesh-inversion shell scripts via the same env
+    # variable, so all four stages use one transform version.
+    template_to_ccf_dir = os.environ.get(
+        "TEMPLATE_TO_CCF_DIR", "/data/reg_exaspim_template_to_ccf_25um_v1.5")
     exaspim_to_ccf_transform_path = [
-        os.path.abspath("/data/reg_exaspim_template_to_ccf_25um_v1.5/1Warp.nii.gz"),
-        os.path.abspath("/data/reg_exaspim_template_to_ccf_25um_v1.5/0GenericAffine.mat")
+        os.path.abspath(f"{template_to_ccf_dir}/1Warp.nii.gz"),
+        os.path.abspath(f"{template_to_ccf_dir}/0GenericAffine.mat")
     ]
     
     logger.info(f"Starting processing for sample {dataset_id}")

@@ -31,8 +31,13 @@ OBJ_DIR="../data/ccf_2017_obj"
 # Forward transforms in [1Warp, 0GenericAffine] order, no inversion. Points use
 # the forward transforms (opposite of the annotation image path, which uses the
 # inverse warps).
-CCF_TO_TEMPLATE_1="/data/reg_exaspim_template_to_ccf_25um_v1.4/1Warp.nii.gz"
-CCF_TO_TEMPLATE_2="/data/reg_exaspim_template_to_ccf_25um_v1.4/0GenericAffine.mat"
+# The exaSPIM-template-to-CCF transforms, as a mounted data asset. One value so a
+# version bump is one edit, not four files that can drift apart -- v1.4 stayed here
+# in these scripts after main.py moved to v1.5, and the detached v1.4 mount failed
+# the annotation step after registration had already succeeded.
+TEMPLATE_TO_CCF_DIR="${TEMPLATE_TO_CCF_DIR:-/data/reg_exaspim_template_to_ccf_25um_v1.5}"
+CCF_TO_TEMPLATE_1="${TEMPLATE_TO_CCF_DIR}/1Warp.nii.gz"
+CCF_TO_TEMPLATE_2="${TEMPLATE_TO_CCF_DIR}/0GenericAffine.mat"
 TEMPLATE_TO_SAMPLE_1="/results/ccf_alignment/${SUBJECTID}_to_exaSPIM_SyN_1Warp.nii.gz"
 TEMPLATE_TO_SAMPLE_2="/results/ccf_alignment/${SUBJECTID}_to_exaSPIM_SyN_0GenericAffine.mat"
 

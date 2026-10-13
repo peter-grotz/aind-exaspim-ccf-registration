@@ -75,8 +75,13 @@ SAMPLE_IMAGE_PATH="../results/ccf_alignment/registration_metadata/${SUBJECTID}_1
 ACQUISITION_PATH="/results/ccf_alignment/registration_metadata/acquisition_${SUBJECTID}.json"
 
 # Transform paths
-CCF_TO_TEMPLATE_TRANSFORM_1="/data/reg_exaspim_template_to_ccf_25um_v1.4/0GenericAffine.mat"
-CCF_TO_TEMPLATE_TRANSFORM_2="/data/reg_exaspim_template_to_ccf_25um_v1.4/1InverseWarp.nii.gz"
+# The exaSPIM-template-to-CCF transforms, as a mounted data asset. One value so a
+# version bump is one edit, not four files that can drift apart -- v1.4 stayed here
+# in these scripts after main.py moved to v1.5, and the detached v1.4 mount failed
+# the annotation step after registration had already succeeded.
+TEMPLATE_TO_CCF_DIR="${TEMPLATE_TO_CCF_DIR:-/data/reg_exaspim_template_to_ccf_25um_v1.5}"
+CCF_TO_TEMPLATE_TRANSFORM_1="${TEMPLATE_TO_CCF_DIR}/0GenericAffine.mat"
+CCF_TO_TEMPLATE_TRANSFORM_2="${TEMPLATE_TO_CCF_DIR}/1InverseWarp.nii.gz"
 
 TEMPLATE_TO_SAMPLE_TRANSFORM_1="/results/ccf_alignment/${SUBJECTID}_to_exaSPIM_SyN_0GenericAffine.mat"
 TEMPLATE_TO_SAMPLE_TRANSFORM_2="/results/ccf_alignment/${SUBJECTID}_to_exaSPIM_SyN_1InverseWarp.nii.gz"
