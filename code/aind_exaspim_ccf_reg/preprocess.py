@@ -90,35 +90,10 @@ def normalize_acquisition_axes(metadata: Dict[str, Any]) -> List[Dict[str, Any]]
     return sorted(normalized, key=lambda a: a["dimension"], reverse=True)
 
 
-def check_orientation(
-    acquisition_path: str,
-    zarr_image: np.ndarray,
-    logger: logging.Logger,
-    scale: Optional[List[float]] = None,
-) -> ants.ANTsImage:
-    """
-    Check and adjust image orientation based on acquisition metadata.
-    
-    Parameters
-    ----------
-    acquisition_path : str
-        Path to the acquisition metadata JSON file
-    zarr_image : np.ndarray
-        Input image array
-    logger : logging.Logger
-        Logger instance for output messages
-        
-    Returns
-    -------
-    ants.ANTsImage
-        Oriented image as ANTs image object
-    """
-    logger.info("Starting check orientation ......")
-    
-    with open(acquisition_path, "r") as f:
-        metadata = json.load(f)
-
-    logger.info(f"acquisition schema_version: {metadata.get('schema_version')}")
+def orientation_adjustments(
+    metadata: Dict[str, Any], acquisition_path: str, logger: logging.Logger
+) -> Tuple[List[Tuple[int, int]], List[int]]:
+    """Axis swaps and flips that bring the acquisition's array axes to CCF orientation."""
     images = acquisition_images(metadata)
     if not images:
         raise ValueError(
@@ -151,6 +126,47 @@ def check_orientation(
     logger.info(f"normalized axes: {axes}")
     swaps, flips = get_adjustments(axes, ccf_directions)
     swaps = [s for s in swaps if s[0] != s[1]]
+    return swaps, flips
+
+
+def applied_spacing(acquisition_path: str, scale: List[float]) -> List[float]:
+    """Voxel spacing as check_orientation sets it on the reoriented image."""
+    with open(acquisition_path, "r") as f:
+        metadata = json.load(f)
+    swaps, _ = orientation_adjustments(metadata, acquisition_path, logger)
+    return reorder_scale(list(scale), swaps)
+
+
+def check_orientation(
+    acquisition_path: str,
+    zarr_image: np.ndarray,
+    logger: logging.Logger,
+    scale: Optional[List[float]] = None,
+) -> ants.ANTsImage:
+    """
+    Check and adjust image orientation based on acquisition metadata.
+    
+    Parameters
+    ----------
+    acquisition_path : str
+        Path to the acquisition metadata JSON file
+    zarr_image : np.ndarray
+        Input image array
+    logger : logging.Logger
+        Logger instance for output messages
+        
+    Returns
+    -------
+    ants.ANTsImage
+        Oriented image as ANTs image object
+    """
+    logger.info("Starting check orientation ......")
+    
+    with open(acquisition_path, "r") as f:
+        metadata = json.load(f)
+
+    logger.info(f"acquisition schema_version: {metadata.get('schema_version')}")
+    swaps, flips = orientation_adjustments(metadata, acquisition_path, logger)
     logger.info(f"**swaps {swaps}, flips {flips}**")
     zarr_image = adjust_array(zarr_image, swaps, flips)
     ants_img = ants.from_numpy(zarr_image.astype(np.float32))

@@ -27,7 +27,7 @@ from aind_exaspim_ccf_reg.utils import (
     extract_dataset_id
 )
 from aind_exaspim_ccf_reg.configs import PathLike, RegSchema
-from aind_exaspim_ccf_reg.preprocess import perc_normalization, check_orientation
+from aind_exaspim_ccf_reg.preprocess import applied_spacing, check_orientation, perc_normalization
 from aind_exaspim_ccf_reg.plots import plot_reg, plot_antsimgs
 from aind_process_record import make_data_process, write_data_processes
 from aind_exaspim_ccf_reg.register import RegistrationPipeline
@@ -241,7 +241,12 @@ def main() -> None:
                 "use_fused_mask": os.environ.get("USE_FUSED_MASK", "true").strip().lower()
                                   not in ("0", "false", "no", "off", "none", "skip", "n", "f", ""),
                 "mask_applied": os.path.exists(f"{outprefix}{dataset_id}_fused_mask.nii.gz"),
-                "sample_to_template_registration": example_input["reg_param_25um"],
+                "sample_to_template_registration": {
+                    **example_input["reg_param_25um"],
+                    "applied_spacing_mm": applied_spacing(
+                        acquisition_output, example_input["reg_param_25um"]["sample_scale"]
+                    ),
+                },
                 "template_to_ccf_transforms": exaspim_to_ccf_transform_path,
             },
             experimenters=["Peter Grotz"],
@@ -315,7 +320,12 @@ def main() -> None:
                     "level": level,
                     "resolution_um": resolution,
                     "dataset_id": f"{dataset_id}_10um",
-                    "sample_to_template_registration": example_input["reg_param_10um"],
+                    "sample_to_template_registration": {
+                        **example_input["reg_param_10um"],
+                        "applied_spacing_mm": applied_spacing(
+                            acquisition_output, example_input["reg_param_10um"]["sample_scale"]
+                        ),
+                    },
                     "sample_to_template_transforms": brain_to_exaspim_transform_path,
                     "template_to_ccf_transforms": exaspim_to_ccf_transform_path,
                 },
